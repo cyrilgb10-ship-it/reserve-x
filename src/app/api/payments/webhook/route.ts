@@ -33,21 +33,27 @@ const SUPPORTED_EVENTS = [
   "transaction.cancelled",
 ] as const;
 
+type SasPayMetadata = {
+  bookingId?: string;
+  bookingReference?: string;
+  paymentId?: string;
+  attemptNumber?: number | string;
+};
+
 type SasPayPayload = {
   event?: string;
 
   data?: {
     id?: string;
     status?: string;
+
+    // SasPay peut retourner l'un ou l'autre.
     amount?: string | number;
+    requested_amount?: string | number;
+
     currency?: string;
 
-    metadata?: {
-      bookingId?: string;
-      bookingReference?: string;
-      paymentId?: string;
-      attemptNumber?: number | string;
-    };
+    metadata?: SasPayMetadata;
   };
 };
 
@@ -60,6 +66,17 @@ type InternalWebhookResult = {
   pushNotifications: PushNotificationInput[];
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  );
+}
+
+/**
+ * Vérifie la signature HMAC du webhook SasPay.
+ */
 function verifySignature(
   rawBody: string,
   signature: string,
@@ -117,6 +134,64 @@ function verifySignature(
   );
 }
 
+/**
+ * Vérifie le montant et la devise transmis par SasPay.
+ *
+ * Priorité :
+ * 1. requested_amount
+ * 2. amount
+ *
+ * On ne compare pas debited_amount ou net_amount :
+ * ils peuvent inclure ou exclure des frais.
+ */
+function validateProviderAmountAndCurrency(
+  data: NonNullable<SasPayPayload["data"]>,
+  expectedAmount: number,
+  expectedCurrency: string,
+): boolean {
+  const providerAmount =
+    data.requested_amount ?? data.amount;
+
+  const providerCurrency = data.currency;
+
+  if (
+    providerAmount === undefined ||
+    providerAmount === null ||
+    providerAmount === ""
+  ) {
+    return false;
+  }
+
+  if (
+    typeof providerCurrency !== "string" ||
+    !providerCurrency.trim()
+  ) {
+    return false;
+  }
+
+  const receivedAmount = Number(providerAmount);
+
+  if (
+    !Number.isFinite(receivedAmount) ||
+    !Number.isSafeInteger(receivedAmount) ||
+    receivedAmount !== expectedAmount
+  ) {
+    return false;
+  }
+
+  return (
+    providerCurrency.trim().toUpperCase() ===
+    expectedCurrency.trim().toUpperCase()
+  );
+}
+
+/**
+ * Traite un paiement réussi.
+ *
+ * La confirmation de la réservation, la génération du QR code,
+ * le crédit du portefeuille et les notifications en base
+ * sont effectués dans une seule transaction.
+ */
 async function processSuccessfulPayment(
   paymentId: string,
   providerPaymentId: string,
@@ -132,6 +207,7 @@ async function processSuccessfulPayment(
       const result: InternalWebhookResult =
         await prisma.$transaction(
           async (tx) => {
+            // 1. Relire le paiement.
             const currentPayment = await tx.payment.findUnique({
               where: {
                 id: paymentId,
@@ -140,13 +216,16 @@ async function processSuccessfulPayment(
 
             if (
               !currentPayment ||
+              currentPayment.provider !== "SASPAY" ||
               currentPayment.providerPaymentId !== providerPaymentId ||
               currentPayment.amount !== receivedAmount ||
-              currentPayment.currency !== receivedCurrency
+              currentPayment.currency.toUpperCase() !==
+                receivedCurrency.toUpperCase()
             ) {
               throw new Error("IDENTITE_PAIEMENT_INVALIDE");
             }
 
+            // 2. Récupérer la réservation.
             const booking = await tx.booking.findUnique({
               where: {
                 id: currentPayment.bookingId,
@@ -171,16 +250,18 @@ async function processSuccessfulPayment(
 
             if (
               booking.amount !== currentPayment.amount ||
-              booking.currency !== currentPayment.currency
+              booking.currency.toUpperCase() !==
+                currentPayment.currency.toUpperCase()
             ) {
               throw new Error("MONTANT_RESERVATION_INCOHERENT");
             }
 
-            // Enregistrer le paiement réellement confirmé par SasPay.
+            // 3. Enregistrer la réussite réelle chez SasPay.
             //
-            // Une ancienne tentative peut être SUCCESS :
-            // elle sera conservée pour réconciliation,
-            // mais ne pourra jamais confirmer la réservation.
+            // Une ancienne tentative peut être SUCCESS chez SasPay.
+            // Elle sera conservée pour réconciliation, mais ne pourra
+            // jamais confirmer une réservation liée à une tentative
+            // plus récente.
 
             await tx.payment.updateMany({
               where: {
@@ -219,7 +300,7 @@ async function processSuccessfulPayment(
               };
             }
 
-            // Une ancienne tentative ne peut jamais confirmer.
+            // 4. Une ancienne tentative ne peut jamais confirmer.
             if (
               updatedPayment.attemptNumber !== booking.paymentAttempt
             ) {
@@ -232,8 +313,7 @@ async function processSuccessfulPayment(
               };
             }
 
-            // Interdiction de réactiver une réservation annulée,
-            // expirée ou remboursée.
+            // 5. Ne jamais réactiver une réservation indisponible.
             if (
               booking.status === BookingStatus.CANCELLED ||
               booking.status === BookingStatus.EXPIRED ||
@@ -248,14 +328,14 @@ async function processSuccessfulPayment(
               };
             }
 
-            // Vérifier la limite de 20 minutes.
+            // 6. Vérifier la limite de 20 minutes.
             if (booking.status === BookingStatus.PENDING_PAYMENT) {
               const expirationTime =
                 booking.createdAt.getTime() +
                 PENDING_HOLD_MINUTES * 60 * 1000;
 
               if (Date.now() >= expirationTime) {
-                await tx.booking.updateMany({
+                const expiration = await tx.booking.updateMany({
                   where: {
                     id: booking.id,
                     status: BookingStatus.PENDING_PAYMENT,
@@ -265,6 +345,10 @@ async function processSuccessfulPayment(
                     status: BookingStatus.EXPIRED,
                   },
                 });
+
+                if (expiration.count !== 1) {
+                  throw new Error("EXPIRATION_RESERVATION_ECHOUEE");
+                }
 
                 return {
                   confirmed: false,
@@ -276,7 +360,7 @@ async function processSuccessfulPayment(
               }
             }
 
-            // Confirmer uniquement la dernière tentative.
+            // 7. Confirmer uniquement la dernière tentative.
             let bookingConfirmedNow = false;
 
             if (booking.status === BookingStatus.PENDING_PAYMENT) {
@@ -299,7 +383,7 @@ async function processSuccessfulPayment(
               bookingConfirmedNow = true;
             }
 
-            // Vérifier l'état définitif de la réservation.
+            // 8. Relire la réservation après confirmation.
             const confirmedBooking = await tx.booking.findUnique({
               where: {
                 id: booking.id,
@@ -330,10 +414,9 @@ async function processSuccessfulPayment(
               throw new Error("RESERVATION_NON_CONFIRMEE");
             }
 
+            // 9. Créditer le portefeuille une seule fois.
             let credited = false;
 
-            // Créditer le portefeuille une seule fois.
-            // Ne jamais recréditer une réservation terminée.
             if (
               confirmedBooking.status === BookingStatus.CONFIRMED
             ) {
@@ -345,12 +428,7 @@ async function processSuccessfulPayment(
               credited = credit.credited;
             }
 
-            // Créer les notifications uniquement lors de la première
-            // confirmation effective de la réservation.
-            //
-            // Les notifications en base sont enregistrées dans
-            // la même transaction que la confirmation.
-
+            // 10. Créer les notifications dans la transaction.
             const pushNotifications = bookingConfirmedNow
               ? await createBookingPaymentNotifications(tx, {
                   id: confirmedBooking.id,
@@ -373,8 +451,18 @@ async function processSuccessfulPayment(
           },
         );
 
-      // Les push sont envoyés uniquement après le commit.
-      await sendPushNotifications(result.pushNotifications);
+      // 11. Envoyer les notifications push après le commit.
+      //
+      // Une erreur push ne doit pas transformer un paiement
+      // déjà confirmé en échec de webhook.
+      try {
+        await sendPushNotifications(result.pushNotifications);
+      } catch (pushError) {
+        console.error(
+          "Erreur envoi push après traitement du webhook SasPay :",
+          pushError,
+        );
+      }
 
       return result;
     } catch (error) {
@@ -499,7 +587,7 @@ export async function POST(request: NextRequest) {
     let payload: SasPayPayload;
 
     try {
-      payload = JSON.parse(rawBody);
+      payload = JSON.parse(rawBody) as SasPayPayload;
     } catch {
       return NextResponse.json(
         {
@@ -541,7 +629,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Ignorer les événements non pris en charge.
-    // Ne pas rattacher leur identifiant à un paiement.
     if (
       !SUPPORTED_EVENTS.includes(
         event as (typeof SUPPORTED_EVENTS)[number],
@@ -566,11 +653,11 @@ export async function POST(request: NextRequest) {
     });
 
     if (!payment && metadata?.paymentId) {
-      const attemptNumber = Number(
-        metadata.attemptNumber,
-      );
+      const attemptNumber = Number(metadata.attemptNumber);
 
       if (
+        typeof metadata.paymentId !== "string" ||
+        typeof metadata.bookingId !== "string" ||
         !metadata.bookingId ||
         !Number.isSafeInteger(attemptNumber) ||
         attemptNumber < 1
@@ -612,15 +699,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // 6. Vérifier les métadonnées lorsqu'elles sont fournies.
     if (metadata) {
-      const metadataAttempt = Number(
-        metadata.attemptNumber,
-      );
-
       if (
-        metadata.paymentId !== payment.id ||
-        metadata.bookingId !== payment.bookingId ||
-        metadataAttempt !== payment.attemptNumber
+        (
+          metadata.paymentId !== undefined &&
+          metadata.paymentId !== payment.id
+        ) ||
+        (
+          metadata.bookingId !== undefined &&
+          metadata.bookingId !== payment.bookingId
+        ) ||
+        (
+          metadata.attemptNumber !== undefined &&
+          Number(metadata.attemptNumber) !== payment.attemptNumber
+        )
       ) {
         return NextResponse.json(
           {
@@ -629,6 +722,15 @@ export async function POST(request: NextRequest) {
           { status: 400 },
         );
       }
+    }
+
+    if (payment.provider !== "SASPAY") {
+      return NextResponse.json(
+        {
+          error: "Fournisseur de paiement incorrect.",
+        },
+        { status: 409 },
+      );
     }
 
     if (
@@ -644,20 +746,25 @@ export async function POST(request: NextRequest) {
     }
 
     // ==================================================
-    // 6. VÉRIFICATION DU MONTANT ET DE LA DEVISE
+    // 7. VÉRIFICATION DU MONTANT ET DE LA DEVISE
     // ==================================================
 
-    const receivedAmount = Number(data.amount);
-
     if (
-      !Number.isSafeInteger(receivedAmount) ||
-      receivedAmount !== payment.amount ||
-      data.currency !== payment.currency
+      !validateProviderAmountAndCurrency(
+        data,
+        payment.amount,
+        payment.currency,
+      )
     ) {
       console.error(
         "Incohérence du montant ou de la devise SasPay.",
         {
           paymentId: payment.id,
+          requestedAmount: data.requested_amount ?? null,
+          amount: data.amount ?? null,
+          currency: data.currency ?? null,
+          expectedAmount: payment.amount,
+          expectedCurrency: payment.currency,
         },
       );
 
@@ -669,8 +776,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const receivedAmount = Number(
+      data.requested_amount ?? data.amount,
+    );
+
+    const receivedCurrency = data.currency!.trim().toUpperCase();
+
     // ==================================================
-    // 7. RATTACHEMENT SÉCURISÉ DE L'IDENTIFIANT SASPAY
+    // 8. RATTACHEMENT SÉCURISÉ DE L'IDENTIFIANT SASPAY
     // ==================================================
 
     try {
@@ -717,11 +830,11 @@ export async function POST(request: NextRequest) {
     }
 
     // ==================================================
-    // 8. PAIEMENT RÉUSSI
+    // 9. PAIEMENT RÉUSSI
     // ==================================================
 
     if (event === "transaction.success") {
-      if (data.status !== "SUCCESS") {
+      if (data.status?.trim().toUpperCase() !== "SUCCESS") {
         return NextResponse.json(
           {
             error: "Statut de transaction incohérent.",
@@ -734,7 +847,7 @@ export async function POST(request: NextRequest) {
         payment.id,
         data.id,
         receivedAmount,
-        data.currency!,
+        receivedCurrency,
       );
 
       // Ancienne tentative payée.
@@ -801,11 +914,11 @@ export async function POST(request: NextRequest) {
     }
 
     // ==================================================
-    // 9. PAIEMENT ÉCHOUÉ
+    // 10. PAIEMENT ÉCHOUÉ
     // ==================================================
 
     if (event === "transaction.failed") {
-      if (data.status !== "FAILED") {
+      if (data.status?.trim().toUpperCase() !== "FAILED") {
         return NextResponse.json(
           {
             error: "Statut d'échec incohérent.",
@@ -826,11 +939,11 @@ export async function POST(request: NextRequest) {
     }
 
     // ==================================================
-    // 10. PAIEMENT ANNULÉ
+    // 11. PAIEMENT ANNULÉ
     // ==================================================
 
     if (event === "transaction.cancelled") {
-      if (data.status !== "CANCELLED") {
+      if (data.status?.trim().toUpperCase() !== "CANCELLED") {
         return NextResponse.json(
           {
             error: "Statut d'annulation incohérent.",

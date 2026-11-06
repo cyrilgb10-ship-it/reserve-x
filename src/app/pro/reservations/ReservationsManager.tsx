@@ -358,6 +358,12 @@ export default function ReservationsManager() {
 
             const scannedValue = result.getText();
 
+            console.log("[Reserve X] Diagnostic QR :", {
+            longueur: scannedValue.length,
+            formatValide: /^[a-f0-9]{64}$/i.test(scannedValue.trim()),
+            espaces: scannedValue !== scannedValue.trim(),
+            });
+
             controls?.stop();
             scannerControlsRef.current?.stop();
 

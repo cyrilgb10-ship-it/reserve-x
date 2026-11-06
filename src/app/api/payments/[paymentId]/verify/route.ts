@@ -50,27 +50,50 @@ function isRecord(value: unknown): value is ProviderResponse {
   );
 }
 
+/**
+ * Vérifie le montant et la devise retournés par SasPay.
+ *
+ * SasPay peut retourner :
+ * - requested_amount: "500.00"
+ * - amount: "500"
+ *
+ * On privilégie requested_amount, qui représente le montant
+ * initial de la transaction.
+ *
+ * On ne compare pas net_amount ou debited_amount :
+ * ces champs peuvent intégrer des frais différents du montant
+ * réellement demandé pour la réservation.
+ */
 function validateProviderAmountAndCurrency(
   paymentData: ProviderResponse,
   expectedAmount: number,
   expectedCurrency: string,
   required: boolean,
 ): boolean {
-  const hasAmount = paymentData.amount !== undefined &&
-    paymentData.amount !== null;
+  const providerAmount =
+    paymentData.requested_amount ?? paymentData.amount;
 
-  const hasCurrency = paymentData.currency !== undefined &&
-    paymentData.currency !== null;
+  const providerCurrency = paymentData.currency;
+
+  const hasAmount =
+    providerAmount !== undefined &&
+    providerAmount !== null &&
+    providerAmount !== "";
+
+  const hasCurrency =
+    providerCurrency !== undefined &&
+    providerCurrency !== null &&
+    providerCurrency !== "";
 
   if (required && (!hasAmount || !hasCurrency)) {
     return false;
   }
 
-  // Si SasPay fournit le montant, il doit correspondre.
   if (hasAmount) {
-    const amount = Number(paymentData.amount);
+    const amount = Number(providerAmount);
 
     if (
+      !Number.isFinite(amount) ||
       !Number.isSafeInteger(amount) ||
       amount !== expectedAmount
     ) {
@@ -78,11 +101,11 @@ function validateProviderAmountAndCurrency(
     }
   }
 
-  // Si SasPay fournit la devise, elle doit correspondre.
   if (hasCurrency) {
     if (
-      typeof paymentData.currency !== "string" ||
-      paymentData.currency !== expectedCurrency
+      typeof providerCurrency !== "string" ||
+      providerCurrency.trim().toUpperCase() !==
+        expectedCurrency.trim().toUpperCase()
     ) {
       return false;
     }
@@ -626,8 +649,6 @@ export async function GET(
     const providerStatus = paymentData.status.trim().toUpperCase();
 
     // 8. PAIEMENT RÉUSSI.
-    //
-    // Pour SUCCESS, montant et devise sont obligatoires.
     if (providerStatus === "SUCCESS") {
       const validAmountAndCurrency =
         validateProviderAmountAndCurrency(
@@ -640,6 +661,11 @@ export async function GET(
       if (!validAmountAndCurrency) {
         console.error("Montant ou devise SasPay incohérent.", {
           paymentId: payment.id,
+          requestedAmount: paymentData.requested_amount ?? null,
+          amount: paymentData.amount ?? null,
+          currency: paymentData.currency ?? null,
+          expectedAmount: payment.amount,
+          expectedCurrency: payment.currency,
         });
 
         return NextResponse.json(
@@ -653,7 +679,7 @@ export async function GET(
 
       const outcome = await processSuccessfulPayment(
         payment.id,
-        paymentData.id as string,
+        paymentData.id,
         payment.amount,
         payment.currency,
         customer.id,
@@ -737,11 +763,6 @@ export async function GET(
     }
 
     // 10. PAIEMENT ÉCHOUÉ.
-    //
-    // SasPay peut ne pas retourner le montant ou la devise
-    // dans une réponse d'échec.
-    //
-    // S'ils sont présents, ils doivent néanmoins être corrects.
     if (providerStatus === "FAILED") {
       const validOptionalAmountAndCurrency =
         validateProviderAmountAndCurrency(
