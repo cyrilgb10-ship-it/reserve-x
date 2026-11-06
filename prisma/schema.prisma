@@ -9,6 +9,7 @@ datasource db {
 
 enum UserRole {
   PROFESSIONAL
+  CUSTOMER
   ADMIN
 }
 
@@ -99,40 +100,44 @@ model User {
   passwordHash String
   role         UserRole @default(PROFESSIONAL)
 
-  profile      ProfessionalProfile?
-  notifications Notification[]
+  profile           ProfessionalProfile?
+  notifications     Notification[]
+  pushSubscriptions PushSubscription[]
+  customerBookings  Booking[]            @relation("CustomerBookings")
 
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([role])
 }
 
 model ProfessionalProfile {
-  id          String @id @default(cuid())
-  userId      String @unique
+  id     String @id @default(cuid())
+  userId String @unique
 
   businessName String
-  slug         String @unique
+  slug         String               @unique
   category     ProfessionalCategory
   description  String?
 
-  address      String?
-  city         String
-  country      String @default("Togo")
+  address String?
+  city    String
+  country String  @default("Togo")
 
   contactEmail String?
   contactPhone String?
 
-  isPublished  Boolean @default(false)
-  blueBadgeAt  DateTime?
+  isPublished Boolean   @default(false)
+  blueBadgeAt DateTime?
 
-  user          User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  services      Service[]
-  bookings      Booking[]
-  wallet        Wallet?
-  subscriptions Subscription[]
-  reviews       Review[]
+  user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  services             Service[]
+  bookings             Booking[]
+  wallet               Wallet?
+  subscriptions        Subscription[]
+  subscriptionPayments SubscriptionPayment[]
+  reviews              Review[]
+  businessHours        BusinessHour[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -142,24 +147,24 @@ model ProfessionalProfile {
 }
 
 model Service {
-  id          String @id @default(cuid())
-  profileId   String
+  id        String @id @default(cuid())
+  profileId String
 
   name        String
   description String?
   price       Int
-  currency    String @default("XOF")
+  currency    String  @default("XOF")
 
   durationMinutes Int?
-  capacity        Int @default(1)
+  capacity        Int  @default(1)
 
-  isActive    Boolean @default(true)
+  isActive Boolean @default(true)
 
-  profile       ProfessionalProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  bookings      Booking[]
+  profile        ProfessionalProfile    @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  bookings       Booking[]
   availabilities ServiceAvailability[]
   blockedPeriods ServiceBlockedPeriod[]
-  customFields  CustomField[]
+  customFields   CustomField[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -195,36 +200,42 @@ model ServiceBlockedPeriod {
 }
 
 model Booking {
-  id          String @id @default(cuid())
-  reference   String @unique
+  id        String @id @default(cuid())
+  reference String @unique
 
-  profileId   String
-  serviceId   String
+  profileId  String
+  serviceId  String
+  customerId String
 
   customerFirstName String
   customerLastName  String
   customerPhone     String
   customerEmail     String
 
-  startsAt    DateTime
-  endsAt      DateTime?
+  startsAt DateTime
+  endsAt   DateTime?
 
-  quantity    Int @default(1)
-  amount      Int
-  currency    String @default("XOF")
+  quantity Int    @default(1)
+  amount   Int
+  currency String @default("XOF")
 
-  status      BookingStatus @default(PENDING_PAYMENT)
+  status BookingStatus @default(PENDING_PAYMENT)
 
-  qrToken     String? @unique
-  qrUsedAt    DateTime?
-  completedAt DateTime?
+  qrToken          String?   @unique
+  qrUsedAt         DateTime?
+  completedAt      DateTime?
+  qrEmailSentAt    DateTime?
+  qrEmailSendingAt DateTime?
 
-  profile     ProfessionalProfile @relation(fields: [profileId], references: [id])
-  service     Service @relation(fields: [serviceId], references: [id])
-  payment     Payment?
-  review      Review?
-  fieldValues BookingFieldValue[]
-  transactions WalletTransaction[]
+  profile  ProfessionalProfile @relation(fields: [profileId], references: [id])
+  service  Service             @relation(fields: [serviceId], references: [id])
+  customer User?               @relation("CustomerBookings", fields: [customerId], references: [id], onDelete: Restrict)
+
+  paymentAttempt Int                 @default(0)
+  payments       Payment[]
+  review         Review?
+  fieldValues    BookingFieldValue[]
+  transactions   WalletTransaction[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -232,45 +243,50 @@ model Booking {
   @@index([profileId, startsAt])
   @@index([serviceId, startsAt])
   @@index([status])
+  @@index([customerId, createdAt])
 }
 
 model Payment {
   id String @id @default(cuid())
 
-  bookingId String @unique
-  provider  PaymentProvider @default(SASPAY)
+  bookingId     String
+  attemptNumber Int    @default(1)
 
-  providerPaymentId String? @unique
-  amount            Int
-  currency          String @default("XOF")
+  provider          PaymentProvider @default(SASPAY)
+  providerPaymentId String?         @unique
+
+  amount   Int
+  currency String @default("XOF")
 
   status PaymentStatus @default(PENDING)
 
   network       String?
   customerPhone String?
 
-  paidAt       DateTime?
-  verifiedAt   DateTime?
+  paidAt     DateTime?
+  verifiedAt DateTime?
 
   booking Booking @relation(fields: [bookingId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([bookingId, attemptNumber])
+  @@index([bookingId, status])
   @@index([status])
 }
 
 model Review {
-  id          String @id @default(cuid())
+  id String @id @default(cuid())
 
-  profileId   String
-  bookingId   String @unique
+  profileId String
+  bookingId String @unique
 
-  rating      Int
-  comment     String?
+  rating  Int
+  comment String?
 
-  profile     ProfessionalProfile @relation(fields: [profileId], references: [id])
-  booking     Booking @relation(fields: [bookingId], references: [id])
+  profile ProfessionalProfile @relation(fields: [profileId], references: [id])
+  booking Booking             @relation(fields: [bookingId], references: [id])
 
   createdAt DateTime @default(now())
 
@@ -303,9 +319,9 @@ model WalletTransaction {
   type        WalletTransactionType
   amount      Int
   description String?
-  reference   String @unique
+  reference   String                @unique
 
-  wallet  Wallet @relation(fields: [walletId], references: [id])
+  wallet  Wallet   @relation(fields: [walletId], references: [id])
   booking Booking? @relation(fields: [bookingId], references: [id])
 
   createdAt DateTime @default(now())
@@ -320,14 +336,14 @@ model Withdrawal {
   reference String @unique
   amount    Int
 
-  firstName  String
-  lastName   String
-  phone      String
-  operator   String
+  firstName String
+  lastName  String
+  phone     String
+  operator  String
 
   status WithdrawalStatus @default(PENDING)
 
-  adminNote String?
+  adminNote   String?
   processedAt DateTime?
 
   wallet Wallet @relation(fields: [walletId], references: [id])
@@ -342,8 +358,8 @@ model Subscription {
   id        String @id @default(cuid())
   profileId String
 
-  plan      SubscriptionPlan
-  status    SubscriptionStatus @default(ACTIVE)
+  plan   SubscriptionPlan
+  status SubscriptionStatus @default(ACTIVE)
 
   amount    Int
   startsAt  DateTime
@@ -357,16 +373,43 @@ model Subscription {
   @@index([profileId, status])
 }
 
+model SubscriptionPayment {
+  id        String @id @default(cuid())
+  profileId String
+
+  provider          PaymentProvider @default(SASPAY)
+  providerPaymentId String?         @unique
+
+  amount   Int
+  currency String @default("XOF")
+
+  status      PaymentStatus @default(PENDING)
+  isAbandoned Boolean       @default(false)
+
+  network       String?
+  customerPhone String?
+
+  paidAt     DateTime?
+  verifiedAt DateTime?
+
+  profile ProfessionalProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([profileId, status])
+}
+
 model CustomField {
   id        String @id @default(cuid())
   serviceId String
 
-  label     String
-  type      CustomFieldType
-  required  Boolean @default(false)
-  options   Json?
+  label    String
+  type     CustomFieldType
+  required Boolean         @default(false)
+  options  Json?
 
-  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  service Service             @relation(fields: [serviceId], references: [id], onDelete: Cascade)
   values  BookingFieldValue[]
 
   createdAt DateTime @default(now())
@@ -389,14 +432,52 @@ model Notification {
   id     String @id @default(cuid())
   userId String
 
-  title   String
-  message String
-  type    NotificationType
-  isRead  Boolean @default(false)
+  title     String
+  message   String
+  type      NotificationType
+  isRead    Boolean          @default(false)
+  dedupeKey String?          @unique
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
 
   @@index([userId, isRead])
+}
+
+model PushSubscription {
+  id     String @id @default(cuid())
+  userId String
+
+  endpoint  String  @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model BusinessHour {
+  id        String @id @default(cuid())
+  profileId String
+
+  // 1 = Lundi, 2 = Mardi ... 7 = Dimanche
+  dayOfWeek Int
+
+  isOpen    Boolean @default(true)
+  openTime  String  @default("08:00")
+  closeTime String  @default("18:00")
+
+  profile ProfessionalProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([profileId, dayOfWeek])
+  @@index([profileId])
 }

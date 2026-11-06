@@ -5,10 +5,15 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { createSession } from "@/lib/auth";
 
-
 const inscriptionSchema = z.object({
   name: z.string().trim().min(2, "Nom trop court").max(80),
-  email: z.string().trim().email("Adresse e-mail invalide").max(150),
+
+  email: z
+    .string()
+    .trim()
+    .email("Adresse e-mail invalide")
+    .max(150),
+
   phone: z
     .string()
     .trim()
@@ -17,7 +22,10 @@ const inscriptionSchema = z.object({
       (value) => /^\+?[0-9]{8,15}$/.test(value),
       "Numéro de téléphone invalide"
     ),
-  password: z.string().min(8, "Le mot de passe doit contenir au moins 8 caractères"),
+
+  password: z
+    .string()
+    .min(8, "Le mot de passe doit contenir au moins 8 caractères"),
 });
 
 export async function POST(request: Request) {
@@ -29,14 +37,15 @@ export async function POST(request: Request) {
     if (!validation.success) {
       return NextResponse.json(
         {
-          error: validation.error.issues[0]?.message ?? "Informations invalides.",
+          error:
+            validation.error.issues[0]?.message ??
+            "Informations invalides.",
         },
         { status: 400 }
       );
     }
 
     const data = validation.data;
-
     const email = data.email.toLowerCase();
 
     const existingUser = await prisma.user.findFirst({
@@ -95,6 +104,21 @@ export async function POST(request: Request) {
       { status: 201 }
     );
   } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2002"
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Cette adresse e-mail ou ce numéro de téléphone est déjà utilisé.",
+        },
+        { status: 409 }
+      );
+    }
+
     console.error("Erreur inscription professionnelle :", error);
 
     return NextResponse.json(

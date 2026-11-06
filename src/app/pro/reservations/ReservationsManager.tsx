@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   CalendarDays,
   Search,
@@ -18,6 +18,8 @@ import {
   Hourglass,
   CalendarCheck,
   Filter,
+  ScanLine,
+  X,
 } from "lucide-react";
 
 import MobileMenu from "@/components/pro/MobileMenu";
@@ -96,32 +98,32 @@ const statusConfig: Record<
 > = {
   PENDING_PAYMENT: {
     label: "En attente de paiement",
-    color: "bg-orange-50 text-orange-700 border-orange-200",
+    color: "border-orange-200 bg-orange-50 text-orange-700",
     icon: Hourglass,
   },
   CONFIRMED: {
     label: "Confirmée",
-    color: "bg-blue-50 text-blue-700 border-blue-200",
+    color: "border-blue-200 bg-blue-50 text-blue-700",
     icon: CalendarCheck,
   },
   COMPLETED: {
     label: "Terminée",
-    color: "bg-green-50 text-green-700 border-green-200",
+    color: "border-emerald-200 bg-emerald-50 text-emerald-700",
     icon: CheckCircle2,
   },
   CANCELLED: {
     label: "Annulée",
-    color: "bg-red-50 text-red-700 border-red-200",
+    color: "border-red-200 bg-red-50 text-red-700",
     icon: XCircle,
   },
   EXPIRED: {
     label: "Expirée",
-    color: "bg-gray-100 text-gray-600 border-gray-200",
+    color: "border-slate-200 bg-slate-100 text-slate-600",
     icon: AlertCircle,
   },
   REFUNDED: {
     label: "Remboursée",
-    color: "bg-purple-50 text-purple-700 border-purple-200",
+    color: "border-violet-200 bg-violet-50 text-violet-700",
     icon: RefreshCw,
   },
 };
@@ -151,6 +153,7 @@ function formatTime(date: string) {
 
 export default function ReservationsManager() {
   const [bookings, setBookings] = useState<Booking[]>([]);
+
   const [counts, setCounts] = useState<Counts>({
     all: 0,
     pendingPayment: 0,
@@ -171,6 +174,28 @@ export default function ReservationsManager() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // ÉTATS DU SCANNER QR
+
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [scannerLoading, setScannerLoading] = useState(false);
+  const [scannerError, setScannerError] = useState("");
+  const [validatingQr, setValidatingQr] = useState(false);
+
+  const [validationFeedback, setValidationFeedback] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  const scannerControlsRef = useRef<{
+    stop: () => void;
+  } | null>(null);
+
+  const scanHandledRef = useRef(false);
+
+  // CHARGEMENT DES RÉSERVATIONS
 
   const loadReservations = useCallback(async () => {
     setLoading(true);
@@ -219,26 +244,193 @@ export default function ReservationsManager() {
     loadReservations();
   }, [loadReservations]);
 
+  // RECHERCHE
+
   function handleSearch(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPage(1);
     setSearch(searchInput.trim());
   }
 
+  // CHANGEMENT DE FILTRE
+
   function handleStatusChange(value: string) {
     setStatus(value);
     setPage(1);
   }
 
+  // VALIDATION DU QR CODE
+
+  const validateScannedQr = useCallback(
+    async (qrCode: string) => {
+      setValidatingQr(true);
+      setValidationFeedback(null);
+
+      try {
+        const response = await fetch(
+          "/api/pro/reservations/validate",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              qrCode,
+            }),
+          }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error ||
+              "Impossible de valider cette réservation."
+          );
+        }
+
+        setValidationFeedback({
+          type: "success",
+          message:
+            data.message ||
+            "Réservation validée avec succès.",
+        });
+
+        await loadReservations();
+      } catch (err) {
+        setValidationFeedback({
+          type: "error",
+          message:
+            err instanceof Error
+              ? err.message
+              : "Une erreur est survenue lors de la validation.",
+        });
+      } finally {
+        setValidatingQr(false);
+      }
+    },
+    [loadReservations]
+  );
+
+  // DÉMARRAGE ET ARRÊT DE LA CAMÉRA
+
+  useEffect(() => {
+    if (!scannerOpen) return;
+
+    let cancelled = false;
+
+    let controls: {
+      stop: () => void;
+    } | null = null;
+
+    scanHandledRef.current = false;
+
+    async function startCamera() {
+      setScannerLoading(true);
+      setScannerError("");
+
+      try {
+        const { BrowserMultiFormatReader } = await import(
+          "@zxing/browser"
+        );
+
+        if (cancelled) return;
+
+        const video = videoRef.current;
+
+        if (!video) {
+          throw new Error(
+            "La caméra n'est pas disponible."
+          );
+        }
+
+        const reader = new BrowserMultiFormatReader();
+
+        controls = await reader.decodeFromVideoDevice(
+          undefined,
+          video,
+          (result) => {
+            if (!result || scanHandledRef.current) {
+              return;
+            }
+
+            scanHandledRef.current = true;
+
+            const scannedValue = result.getText();
+
+            controls?.stop();
+            scannerControlsRef.current?.stop();
+
+            setScannerOpen(false);
+
+            void validateScannedQr(scannedValue);
+          }
+        );
+
+        if (cancelled) {
+          controls.stop();
+        } else {
+          scannerControlsRef.current = controls;
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setScannerError(
+            err instanceof Error
+              ? err.message
+              : "Impossible d'accéder à la caméra."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setScannerLoading(false);
+        }
+      }
+    }
+
+    void startCamera();
+
+    return () => {
+      cancelled = true;
+
+      controls?.stop();
+      scannerControlsRef.current?.stop();
+      scannerControlsRef.current = null;
+
+      const stream = videoRef.current?.srcObject;
+
+      if (
+        stream &&
+        typeof MediaStream !== "undefined" &&
+        stream instanceof MediaStream
+      ) {
+        stream
+          .getTracks()
+          .forEach((track) => track.stop());
+      }
+    };
+  }, [scannerOpen, validateScannedQr]);
+
+  // FERMETURE DU SCANNER
+
+  function closeScanner() {
+    scannerControlsRef.current?.stop();
+    scannerControlsRef.current = null;
+
+    setScannerOpen(false);
+    setScannerError("");
+  }
+
   return (
-    <div className="min-h-screen bg-[#f7f8fc]">
+    <div className="min-h-screen bg-[#f7f9fc] text-[#061b31]">
       <MobileMenu />
 
       <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
-        {/* En-tête */}
+
+        {/* EN-TÊTE */}
+
         <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
           <div>
-            <div className="mb-2 flex items-center gap-2 text-sm font-medium text-[#533afd]">
+            <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-[#533afd]">
               <CalendarDays size={17} />
               Gestion des réservations
             </div>
@@ -247,32 +439,53 @@ export default function ReservationsManager() {
               Mes réservations
             </h1>
 
-            <p className="mt-2 text-sm text-gray-500">
+            <p className="mt-2 text-sm leading-6 text-slate-500">
               Consultez et suivez toutes les réservations de vos clients.
             </p>
           </div>
 
-          <button
-            onClick={loadReservations}
-            disabled={loading}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-[#061b31] shadow-sm transition hover:bg-gray-50 disabled:opacity-50"
-          >
-            <RefreshCw
-              size={16}
-              className={loading ? "animate-spin" : ""}
-            />
-            Actualiser
-          </button>
+          <div className="flex flex-col gap-3 sm:flex-row">
+
+            {/* BOUTON SCANNER */}
+
+            <button
+              onClick={() => {
+                setValidationFeedback(null);
+                setScannerError("");
+                setScannerOpen(true);
+              }}
+              disabled={validatingQr}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#533afd] px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#4229e8] disabled:opacity-50"
+            >
+              <ScanLine size={17} />
+              Scanner un QR code
+            </button>
+
+            {/* BOUTON ACTUALISER */}
+
+            <button
+              onClick={loadReservations}
+              disabled={loading}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-[#061b31] shadow-sm transition hover:border-[#533afd]/30 hover:bg-[#533afd]/5 disabled:opacity-50"
+            >
+              <RefreshCw
+                size={16}
+                className={loading ? "animate-spin" : ""}
+              />
+              Actualiser
+            </button>
+          </div>
         </div>
 
-        {/* Statistiques */}
+        {/* STATISTIQUES */}
+
         <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <StatCard
             label="Total"
             value={counts.all}
             icon={CalendarDays}
             color="text-[#533afd]"
-            bg="bg-purple-50"
+            bg="bg-[#533afd]/10"
           />
 
           <StatCard
@@ -295,13 +508,14 @@ export default function ReservationsManager() {
             label="Terminées"
             value={counts.completed}
             icon={CheckCircle2}
-            color="text-green-600"
-            bg="bg-green-50"
+            color="text-emerald-600"
+            bg="bg-emerald-50"
           />
         </div>
 
-        {/* Recherche */}
-        <div className="mb-5 rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+        {/* RECHERCHE */}
+
+        <div className="mb-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <form
             onSubmit={handleSearch}
             className="flex flex-col gap-3 sm:flex-row"
@@ -309,31 +523,34 @@ export default function ReservationsManager() {
             <div className="relative flex-1">
               <Search
                 size={19}
-                className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"
+                className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
               />
 
               <input
                 type="text"
                 value={searchInput}
-                onChange={(event) => setSearchInput(event.target.value)}
+                onChange={(event) =>
+                  setSearchInput(event.target.value)
+                }
                 placeholder="Rechercher par référence, client, téléphone..."
-                className="w-full rounded-xl border border-gray-200 bg-gray-50 py-3 pl-11 pr-4 text-sm text-[#061b31] outline-none transition focus:border-[#533afd] focus:bg-white"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-11 pr-4 text-sm text-[#061b31] outline-none transition placeholder:text-slate-400 focus:border-[#533afd] focus:bg-white focus:ring-4 focus:ring-[#533afd]/10"
               />
             </div>
 
             <button
               type="submit"
-              className="rounded-xl bg-[#533afd] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#4329e8]"
+              className="rounded-xl bg-[#533afd] px-6 py-3 text-sm font-bold text-white shadow-md shadow-[#533afd]/20 transition hover:bg-[#4229e8]"
             >
               Rechercher
             </button>
           </form>
         </div>
 
-        {/* Filtres */}
+        {/* FILTRES */}
+
         <div className="mb-5">
-          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-[#061b31]">
-            <Filter size={16} />
+          <div className="mb-3 flex items-center gap-2 text-sm font-bold text-[#061b31]">
+            <Filter size={16} className="text-[#533afd]" />
             Filtrer les réservations
           </div>
 
@@ -341,11 +558,13 @@ export default function ReservationsManager() {
             {filters.map((filter) => (
               <button
                 key={filter.value}
-                onClick={() => handleStatusChange(filter.value)}
-                className={`flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium transition ${
+                onClick={() =>
+                  handleStatusChange(filter.value)
+                }
+                className={`flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold transition ${
                   status === filter.value
-                    ? "border-[#533afd] bg-[#533afd] text-white"
-                    : "border-gray-200 bg-white text-gray-600 hover:border-[#533afd] hover:text-[#533afd]"
+                    ? "border-[#533afd] bg-[#533afd] text-white shadow-md shadow-[#533afd]/20"
+                    : "border-slate-200 bg-white text-slate-600 hover:border-[#533afd]/40 hover:bg-[#533afd]/5 hover:text-[#533afd]"
                 }`}
               >
                 {filter.label}
@@ -354,7 +573,7 @@ export default function ReservationsManager() {
                   className={`rounded-md px-1.5 py-0.5 text-xs ${
                     status === filter.value
                       ? "bg-white/20 text-white"
-                      : "bg-gray-100 text-gray-600"
+                      : "bg-slate-100 text-slate-600"
                   }`}
                 >
                   {counts[filter.countKey]}
@@ -364,38 +583,81 @@ export default function ReservationsManager() {
           </div>
         </div>
 
-        {/* Résultats */}
+        {/* RÉSULTATS */}
+
         <div className="mb-4 flex items-center justify-between">
-          <p className="text-sm text-gray-500">
-            <span className="font-semibold text-[#061b31]">{total}</span>{" "}
+          <p className="text-sm text-slate-500">
+            <span className="font-bold text-[#061b31]">
+              {total}
+            </span>{" "}
             réservation(s)
           </p>
 
-          <p className="text-xs text-gray-400">
+          <p className="text-xs font-medium text-slate-400">
             Page {page} sur {totalPages}
           </p>
         </div>
 
+        {/* ERREUR DE CHARGEMENT */}
+
         {error && (
-          <div className="mb-5 flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            <AlertCircle size={19} />
+          <div className="mb-5 flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">
+            <AlertCircle size={19} className="shrink-0" />
             {error}
           </div>
         )}
 
+        {/* RÉSULTAT DE LA VALIDATION QR */}
+
+        {validationFeedback && (
+          <div
+            className={`mb-5 flex items-center gap-3 rounded-xl border p-4 text-sm font-medium ${
+              validationFeedback.type === "success"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "border-red-200 bg-red-50 text-red-700"
+            }`}
+          >
+            {validationFeedback.type === "success" ? (
+              <CheckCircle2
+                size={19}
+                className="shrink-0"
+              />
+            ) : (
+              <AlertCircle
+                size={19}
+                className="shrink-0"
+              />
+            )}
+
+            {validationFeedback.message}
+          </div>
+        )}
+
+        {/* CHARGEMENT DE LA VALIDATION */}
+
+        {validatingQr && (
+          <div className="mb-5 flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm font-medium text-blue-700">
+            <RefreshCw size={18} className="animate-spin" />
+            Vérification et validation de la réservation...
+          </div>
+        )}
+
+        {/* LISTE DES RÉSERVATIONS */}
+
         {loading ? (
-          <div className="rounded-2xl border border-gray-100 bg-white py-20 text-center shadow-sm">
+          <div className="rounded-2xl border border-slate-200 bg-white py-20 text-center shadow-sm">
             <RefreshCw
               size={28}
               className="mx-auto animate-spin text-[#533afd]"
             />
-            <p className="mt-4 text-sm text-gray-500">
+
+            <p className="mt-4 text-sm text-slate-500">
               Chargement des réservations...
             </p>
           </div>
         ) : bookings.length === 0 ? (
-          <div className="rounded-2xl border border-gray-100 bg-white px-5 py-16 text-center shadow-sm">
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-purple-50 text-[#533afd]">
+          <div className="rounded-2xl border border-slate-200 bg-white px-5 py-16 text-center shadow-sm">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[#533afd]/10 text-[#533afd]">
               <CalendarDays size={30} />
             </div>
 
@@ -403,40 +665,50 @@ export default function ReservationsManager() {
               Aucune réservation trouvée
             </h3>
 
-            <p className="mx-auto mt-2 max-w-sm text-sm text-gray-500">
+            <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-slate-500">
               Les réservations correspondant à votre recherche apparaîtront ici.
             </p>
           </div>
         ) : (
           <div className="space-y-4">
             {bookings.map((booking) => (
-              <BookingCard key={booking.id} booking={booking} />
+              <BookingCard
+                key={booking.id}
+                booking={booking}
+              />
             ))}
           </div>
         )}
 
-        {/* Pagination */}
+        {/* PAGINATION */}
+
         {!loading && totalPages > 1 && (
-          <div className="mt-7 flex items-center justify-between rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+          <div className="mt-7 flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <button
-              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              onClick={() =>
+                setPage((current) =>
+                  Math.max(1, current - 1)
+                )
+              }
               disabled={page <= 1}
-              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-[#061b31] transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-[#061b31] transition hover:border-[#533afd]/30 hover:bg-[#533afd]/5 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <ChevronLeft size={17} />
               Précédent
             </button>
 
-            <span className="text-sm font-medium text-gray-500">
+            <span className="text-sm font-semibold text-slate-500">
               {page} / {totalPages}
             </span>
 
             <button
               onClick={() =>
-                setPage((current) => Math.min(totalPages, current + 1))
+                setPage((current) =>
+                  Math.min(totalPages, current + 1)
+                )
               }
               disabled={page >= totalPages}
-              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-[#061b31] transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-[#061b31] transition hover:border-[#533afd]/30 hover:bg-[#533afd]/5 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Suivant
               <ChevronRight size={17} />
@@ -444,7 +716,9 @@ export default function ReservationsManager() {
           </div>
         )}
 
-        <div className="mt-8 rounded-2xl border border-purple-100 bg-purple-50/70 p-5">
+        {/* INFORMATION SUR LA CONFIRMATION */}
+
+        <div className="mt-8 rounded-2xl border border-[#533afd]/10 bg-[#533afd]/5 p-5 sm:p-6">
           <div className="flex items-start gap-3">
             <div className="rounded-xl bg-white p-2 text-[#533afd] shadow-sm">
               <CheckCircle2 size={20} />
@@ -455,7 +729,7 @@ export default function ReservationsManager() {
                 Confirmation des prestations
               </h3>
 
-              <p className="mt-1 text-sm leading-6 text-gray-600">
+              <p className="mt-1 text-sm leading-6 text-slate-600">
                 Après avoir effectué une prestation, vous pourrez scanner le
                 QR code du client et confirmer sa présence. Le montant sera
                 alors transféré de votre solde en attente vers votre solde
@@ -465,9 +739,108 @@ export default function ReservationsManager() {
           </div>
         </div>
       </main>
+
+      {/* FENÊTRE DU SCANNER QR */}
+
+      {scannerOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#061b31]/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+
+            {/* EN-TÊTE DU SCANNER */}
+
+            <div className="flex items-center justify-between border-b border-slate-100 p-5">
+              <div>
+                <h2 className="text-lg font-bold text-[#061b31]">
+                  Scanner le QR code
+                </h2>
+
+                <p className="mt-1 text-sm text-slate-500">
+                  Placez le QR code du client devant la caméra.
+                </p>
+              </div>
+
+              <button
+                onClick={closeScanner}
+                className="rounded-xl border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-100 hover:text-[#061b31]"
+                aria-label="Fermer le scanner"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* CAMÉRA */}
+
+            <div className="p-5">
+              <div className="relative overflow-hidden rounded-xl bg-[#061b31]">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className="aspect-video w-full object-cover"
+                />
+
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                  <div className="h-48 w-48 rounded-2xl border-2 border-[#8b7aff] shadow-[0_0_0_999px_rgba(6,27,49,0.35)]" />
+                </div>
+              </div>
+
+              {/* DÉMARRAGE */}
+
+              {scannerLoading && (
+                <div className="mt-4 flex items-center justify-center gap-2 text-sm font-medium text-slate-500">
+                  <RefreshCw
+                    size={17}
+                    className="animate-spin text-[#533afd]"
+                  />
+                  Démarrage de la caméra...
+                </div>
+              )}
+
+              {/* ERREUR CAMÉRA */}
+
+              {scannerError && (
+                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle
+                      size={18}
+                      className="mt-0.5 shrink-0"
+                    />
+
+                    <p>{scannerError}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* INSTRUCTIONS */}
+
+              {!scannerError && (
+                <p className="mt-4 text-center text-sm leading-6 text-slate-500">
+                  Placez le QR code du client dans le cadre. Le scan
+                  déclenchera automatiquement la vérification de la réservation
+                  et de son paiement.
+                </p>
+              )}
+
+              {/* FERMETURE */}
+
+              <button
+                onClick={closeScanner}
+                className="mt-5 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-[#061b31] transition hover:bg-slate-50"
+              >
+                Fermer le scanner
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+// ======================================================
+// CARTE STATISTIQUE
+// ======================================================
 
 function StatCard({
   label,
@@ -483,32 +856,41 @@ function StatCard({
   bg: string;
 }) {
   return (
-    <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:p-5">
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md sm:p-5">
       <div
         className={`mb-4 flex h-10 w-10 items-center justify-center rounded-xl ${bg} ${color}`}
       >
         <Icon size={20} />
       </div>
 
-      <p className="text-2xl font-bold text-[#061b31]">{value}</p>
-      <p className="mt-1 text-xs font-medium text-gray-500 sm:text-sm">
+      <p className="text-2xl font-bold text-[#061b31]">
+        {value}
+      </p>
+
+      <p className="mt-1 text-xs font-medium text-slate-500 sm:text-sm">
         {label}
       </p>
     </div>
   );
 }
 
+// ======================================================
+// CARTE RÉSERVATION
+// ======================================================
+
 function BookingCard({ booking }: { booking: Booking }) {
   const config = statusConfig[booking.status];
   const StatusIcon = config.icon;
 
   return (
-    <article className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm transition hover:shadow-md">
+    <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition duration-300 hover:border-[#533afd]/20 hover:shadow-lg hover:shadow-slate-200/50">
       <div className="flex flex-col gap-4 p-4 sm:p-5">
-        {/* Référence et statut */}
+
+        {/* RÉFÉRENCE ET STATUT */}
+
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-xs font-medium uppercase tracking-wider text-gray-400">
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
               Référence
             </p>
 
@@ -525,36 +907,54 @@ function BookingCard({ booking }: { booking: Booking }) {
           </span>
         </div>
 
-        <div className="h-px bg-gray-100" />
+        <div className="h-px bg-slate-100" />
 
-        {/* Informations principales */}
+        {/* INFORMATIONS PRINCIPALES */}
+
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+
+          {/* CLIENT */}
+
           <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
+            <p className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-400">
               Client
             </p>
 
             <div className="flex items-center gap-2">
-              <User size={17} className="shrink-0 text-[#533afd]" />
+              <User
+                size={17}
+                className="shrink-0 text-[#533afd]"
+              />
 
               <span className="text-sm font-semibold text-[#061b31]">
-                {booking.customerFirstName} {booking.customerLastName}
+                {booking.customerFirstName}{" "}
+                {booking.customerLastName}
               </span>
             </div>
 
-            <div className="mt-2 flex items-center gap-2 text-sm text-gray-500">
-              <Phone size={15} />
+            <div className="mt-3 flex items-center gap-2 text-sm text-slate-500">
+              <Phone
+                size={15}
+                className="shrink-0 text-slate-400"
+              />
+
               {booking.customerPhone}
             </div>
 
-            <div className="mt-2 flex items-center gap-2 break-all text-sm text-gray-500">
-              <Mail size={15} />
+            <div className="mt-3 flex items-center gap-2 break-all text-sm text-slate-500">
+              <Mail
+                size={15}
+                className="shrink-0 text-slate-400"
+              />
+
               {booking.customerEmail}
             </div>
           </div>
 
+          {/* PRESTATION */}
+
           <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
+            <p className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-400">
               Prestation
             </p>
 
@@ -562,20 +962,26 @@ function BookingCard({ booking }: { booking: Booking }) {
               {booking.service.name}
             </p>
 
-            <p className="mt-2 text-sm text-gray-500">
+            <p className="mt-3 text-sm text-slate-500">
               Quantité : {booking.quantity}
             </p>
 
             {booking.service.durationMinutes && (
-              <p className="mt-2 flex items-center gap-2 text-sm text-gray-500">
-                <Clock size={15} />
+              <p className="mt-3 flex items-center gap-2 text-sm text-slate-500">
+                <Clock
+                  size={15}
+                  className="text-slate-400"
+                />
+
                 {booking.service.durationMinutes} minutes
               </p>
             )}
           </div>
 
+          {/* DATE ET MONTANT */}
+
           <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
+            <p className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-400">
               Date et montant
             </p>
 
@@ -583,22 +989,34 @@ function BookingCard({ booking }: { booking: Booking }) {
               {formatDate(booking.startsAt)}
             </p>
 
-            <p className="mt-2 flex items-center gap-2 text-sm text-gray-500">
-              <Clock size={15} />
-              {formatTime(booking.startsAt)} – {formatTime(booking.endsAt)}
+            <p className="mt-3 flex items-center gap-2 text-sm text-slate-500">
+              <Clock
+                size={15}
+                className="text-slate-400"
+              />
+
+              {formatTime(booking.startsAt)} –{" "}
+              {formatTime(booking.endsAt)}
             </p>
 
-            <p className="mt-2 flex items-center gap-2 text-sm font-bold text-[#533afd]">
+            <p className="mt-3 flex items-center gap-2 text-sm font-bold text-[#533afd]">
               <CreditCard size={15} />
-              {formatAmount(booking.amount, booking.currency)}
+
+              {formatAmount(
+                booking.amount,
+                booking.currency
+              )}
             </p>
           </div>
         </div>
 
-        {/* Paiement */}
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-gray-50 px-4 py-3">
+        {/* PAIEMENT */}
+
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
           <div>
-            <p className="text-xs text-gray-400">Paiement</p>
+            <p className="text-xs font-medium text-slate-400">
+              Paiement
+            </p>
 
             <p className="mt-1 text-sm font-semibold text-[#061b31]">
               {booking.payment?.status === "SUCCESS"
@@ -614,8 +1032,11 @@ function BookingCard({ booking }: { booking: Booking }) {
           </div>
 
           <div className="text-right">
-            <p className="text-xs text-gray-400">Réservation créée le</p>
-            <p className="mt-1 text-sm font-medium text-gray-600">
+            <p className="text-xs font-medium text-slate-400">
+              Réservation créée le
+            </p>
+
+            <p className="mt-1 text-sm font-medium text-slate-600">
               {formatDate(booking.createdAt)}
             </p>
           </div>

@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-
 import {
   Building2,
   CalendarDays,
@@ -14,6 +13,12 @@ import {
   Clock,
   CheckCircle2,
   TrendingUp,
+  Sparkles,
+  ArrowUpRight,
+  BriefcaseBusiness,
+  Star,
+  MessageSquareText,
+  Headset,
 } from "lucide-react";
 
 import type { ReactNode } from "react";
@@ -21,6 +26,8 @@ import type { ReactNode } from "react";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import MobileMenu from "@/components/pro/MobileMenu";
+import PublishProfileButton from "@/components/pro/PublishProfileButton";
+import PushNotifications from "@/components/PushNotifications";
 
 export const instant = false;
 
@@ -54,7 +61,6 @@ function getLastSevenDays() {
     const date = new Date(today);
     date.setHours(0, 0, 0, 0);
     date.setDate(today.getDate() - i);
-
     days.push(date);
   }
 
@@ -66,46 +72,77 @@ function getBookingStatus(status: string) {
     case "PENDING_PAYMENT":
       return {
         label: "En attente de paiement",
-        className: "bg-amber-50 text-amber-700",
+        className: "bg-amber-50 text-amber-700 ring-amber-100",
       };
 
     case "CONFIRMED":
       return {
         label: "Confirmée",
-        className: "bg-emerald-50 text-emerald-700",
+        className: "bg-emerald-50 text-emerald-700 ring-emerald-100",
       };
 
     case "COMPLETED":
       return {
         label: "Terminée",
-        className: "bg-blue-50 text-blue-700",
+        className: "bg-blue-50 text-blue-700 ring-blue-100",
       };
 
     case "CANCELLED":
       return {
         label: "Annulée",
-        className: "bg-red-50 text-red-700",
+        className: "bg-red-50 text-red-700 ring-red-100",
       };
 
     case "EXPIRED":
       return {
         label: "Expirée",
-        className: "bg-slate-100 text-slate-600",
+        className: "bg-slate-100 text-slate-600 ring-slate-200",
       };
 
     case "REFUNDED":
       return {
         label: "Remboursée",
-        className: "bg-purple-50 text-purple-700",
+        className: "bg-purple-50 text-purple-700 ring-purple-100",
       };
 
     default:
       return {
         label: status,
-        className: "bg-slate-100 text-slate-600",
+        className: "bg-slate-100 text-slate-600 ring-slate-200",
       };
   }
 }
+
+/* ÉTOILES */
+
+function RatingStars({
+  rating,
+  size = 16,
+}: {
+  rating: number;
+  size?: number;
+}) {
+  return (
+    <div
+      className="flex items-center gap-1"
+      aria-label={`Note de ${rating} sur 5`}
+    >
+      {[1, 2, 3, 4, 5].map((star) => (
+        <Star
+          key={star}
+          size={size}
+          className={
+            star <= rating
+              ? "fill-amber-400 text-amber-400"
+              : "fill-slate-100 text-slate-200"
+          }
+        />
+      ))}
+    </div>
+  );
+}
+
+/* GRAPHIQUE */
 
 function BookingChart({
   data,
@@ -143,18 +180,17 @@ function BookingChart({
 
   return (
     <div className="w-full">
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="text-lg font-bold text-[#061b31]">
+          <h3 className="text-lg font-extrabold text-[#061b31]">
             Évolution des réservations
           </h3>
-
           <p className="mt-1 text-xs text-slate-400">
             Activité des 7 derniers jours
           </p>
         </div>
 
-        <span className="inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-2 text-xs font-semibold text-[#533afd]">
+        <span className="inline-flex items-center gap-2 rounded-full bg-[#533afd]/10 px-4 py-2 text-xs font-bold text-[#533afd]">
           <span className="h-2 w-2 rounded-full bg-[#533afd]" />
           Réservations
         </span>
@@ -175,7 +211,7 @@ function BookingChart({
               x2="0"
               y2="1"
             >
-              <stop offset="0%" stopColor="#533afd" stopOpacity="0.22" />
+              <stop offset="0%" stopColor="#533afd" stopOpacity="0.25" />
               <stop offset="100%" stopColor="#533afd" stopOpacity="0.01" />
             </linearGradient>
           </defs>
@@ -207,10 +243,7 @@ function BookingChart({
             );
           })}
 
-          <polygon
-            points={areaPoints}
-            fill="url(#bookingGradient)"
-          />
+          <polygon points={areaPoints} fill="url(#bookingGradient)" />
 
           <polyline
             points={linePoints}
@@ -305,8 +338,15 @@ export default async function DashboardProPage() {
                 },
               },
 
-              payment: {
+              paymentAttempt: true,
+
+              payments: {
+                orderBy: {
+                  attemptNumber: "desc",
+                },
+                take: 1,
                 select: {
+                  attemptNumber: true,
                   amount: true,
                   currency: true,
                   status: true,
@@ -315,6 +355,38 @@ export default async function DashboardProPage() {
             },
             orderBy: {
               createdAt: "desc",
+            },
+          },
+
+          reviews: {
+            orderBy: {
+              createdAt: "desc",
+            },
+            take: 10,
+            select: {
+              id: true,
+              rating: true,
+              comment: true,
+              createdAt: true,
+
+              booking: {
+                select: {
+                  customerFirstName: true,
+                  customerLastName: true,
+
+                  service: {
+                    select: {
+                      name: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+
+          _count: {
+            select: {
+              reviews: true,
             },
           },
         },
@@ -329,8 +401,27 @@ export default async function DashboardProPage() {
   const profile = user.profile;
   const bookings = profile?.bookings ?? [];
 
-  const totalServices = profile?.services.length ?? 0;
+  /* STATISTIQUES DES AVIS */
 
+  const reviews = profile?.reviews ?? [];
+  const totalReviews = profile?._count.reviews ?? 0;
+
+  const reviewStats = profile
+    ? await prisma.review.aggregate({
+        where: {
+          profileId: profile.id,
+        },
+        _avg: {
+          rating: true,
+        },
+      })
+    : null;
+
+  const averageRating = reviewStats?._avg.rating ?? null;
+
+  /* STATISTIQUES GÉNÉRALES */
+
+  const totalServices = profile?.services.length ?? 0;
   const totalBookings = bookings.length;
 
   const pendingBookings = bookings.filter(
@@ -345,23 +436,33 @@ export default async function DashboardProPage() {
     (booking) => booking.status === "COMPLETED"
   ).length;
 
-  // Chiffre d'affaires provenant uniquement des paiements réussis.
   const totalRevenue = bookings.reduce((total, booking) => {
-    if (booking.payment?.status === "SUCCESS") {
-      return total + booking.payment.amount;
+    const latestPayment = booking.payments[0];
+
+    if (
+      latestPayment &&
+      latestPayment.attemptNumber === booking.paymentAttempt &&
+      latestPayment.status === "SUCCESS"
+    ) {
+      return total + latestPayment.amount;
     }
 
     return total;
   }, 0);
 
   const revenueCurrency =
-    bookings.find((booking) => booking.payment?.status === "SUCCESS")
-      ?.payment?.currency ?? "XOF";
+    bookings.find((booking) => {
+      const latestPayment = booking.payments[0];
 
-  // Les cinq dernières réservations.
+      return (
+        latestPayment &&
+        latestPayment.attemptNumber === booking.paymentAttempt &&
+        latestPayment.status === "SUCCESS"
+      );
+    })?.payments[0]?.currency ?? "XOF";
+
   const recentBookings = bookings.slice(0, 5);
 
-  // Données du graphique.
   const lastSevenDays = getLastSevenDays();
 
   const chartData = lastSevenDays.map((date) => {
@@ -369,10 +470,7 @@ export default async function DashboardProPage() {
     nextDay.setDate(nextDay.getDate() + 1);
 
     const count = bookings.filter((booking) => {
-      return (
-        booking.createdAt >= date &&
-        booking.createdAt < nextDay
-      );
+      return booking.createdAt >= date && booking.createdAt < nextDay;
     }).length;
 
     return {
@@ -385,310 +483,504 @@ export default async function DashboardProPage() {
 
   return (
     <main className="min-h-screen bg-[#f7f9fc] text-[#061b31]">
-
-      {/* SIDEBAR DESKTOP */}
-
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-slate-200 bg-white lg:flex lg:flex-col">
-
+      {/* SIDEBAR */}
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r border-slate-100 bg-white lg:flex">
         <Link
           href="/"
-          className="flex h-20 items-center gap-2 border-b border-slate-100 px-7 text-2xl font-bold"
+          className="flex h-20 items-center gap-3 border-b border-slate-100 px-7 text-2xl font-extrabold tracking-tight"
         >
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#533afd] text-white">
+          <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-[#654cff] to-[#4229e8] text-white shadow-lg shadow-[#533afd]/20">
             R
           </span>
-
           Reserve<span className="text-[#533afd]">X</span>
         </Link>
 
-        <div className="flex-1 px-4 py-7">
-
-          <p className="mb-4 px-3 text-[10px] font-bold uppercase tracking-[2px] text-slate-400">
+        <div className="flex-1 px-4 py-8">
+          <p className="mb-4 px-3 text-[10px] font-extrabold uppercase tracking-[2px] text-slate-400">
             Espace professionnel
           </p>
 
-          <nav className="space-y-1">
-
-            <Link
+          <nav className="space-y-2">
+            <SidebarLink
               href="/pro/dashboard"
-              className="flex items-center gap-3 rounded-xl bg-[#533afd]/10 px-4 py-3 text-sm font-semibold text-[#533afd]"
-            >
-              <LayoutDashboard size={19} />
-              Tableau de bord
-            </Link>
+              icon={<LayoutDashboard size={19} />}
+              label="Tableau de bord"
+              active
+            />
 
-            <Link
+            <SidebarLink
               href="/pro/profil"
-              className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
-            >
-              <Store size={19} />
-              Mon établissement
-            </Link>
+              icon={<Store size={19} />}
+              label="Mon établissement"
+            />
 
-            <Link
+            <SidebarLink
               href="/pro/prestations"
-              className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
-            >
-              <Building2 size={19} />
-              Mes prestations
-            </Link>
+              icon={<Building2 size={19} />}
+              label="Mes prestations"
+            />
 
-            <Link
+            <SidebarLink
               href="/pro/reservations"
-              className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
-            >
-              <CalendarDays size={19} />
-              Réservations
-            </Link>
+              icon={<CalendarDays size={19} />}
+              label="Réservations"
+            />
 
-            <Link
+            <SidebarLink
               href="/pro/portefeuille"
-              className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
-            >
-              <Wallet size={19} />
-              Portefeuille
-            </Link>
+              icon={<Wallet size={19} />}
+              label="Portefeuille"
+            />
 
-            <Link
+            <SidebarLink
               href="/pro/abonnement"
-              className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
-            >
-              <Settings size={19} />
-              Abonnement
-            </Link>
-
+              icon={<Settings size={19} />}
+              label="Abonnement"
+            />
           </nav>
         </div>
 
         <div className="border-t border-slate-100 p-5">
-
           <Link
             href="/"
-            className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-slate-500 hover:bg-slate-50"
+            className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-slate-500 transition hover:bg-slate-50 hover:text-[#533afd]"
           >
             <ArrowRight size={18} />
             Retour au site
           </Link>
-
         </div>
       </aside>
 
-      {/* CONTENU PRINCIPAL */}
-
+      {/* CONTENU */}
       <div className="lg:pl-64">
-
         {/* HEADER */}
-
-        <header className="sticky top-0 z-20 flex h-20 items-center justify-between border-b border-slate-200 bg-white/90 px-4 backdrop-blur-xl sm:px-8 lg:px-10">
-
+        <header className="sticky top-0 z-20 flex h-20 items-center justify-between border-b border-slate-100 bg-white/90 px-4 backdrop-blur-xl sm:px-8 lg:px-10">
           <div className="flex items-center gap-3">
-
             <MobileMenu />
 
             <div>
               <p className="text-xs font-medium text-slate-400">
                 Espace professionnel
               </p>
-
-              <h1 className="mt-1 text-base font-bold sm:text-lg">
+              <h1 className="mt-1 text-base font-extrabold sm:text-lg">
                 Tableau de bord
               </h1>
             </div>
-
           </div>
 
           <div className="flex items-center gap-3">
-
             <div className="hidden text-right sm:block">
               <p className="text-sm font-bold">{user.name}</p>
               <p className="text-xs text-slate-400">{user.email}</p>
             </div>
 
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#533afd]/10 text-[#533afd]">
-              <UserRound size={20} />
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-[#654cff]/15 to-[#533afd]/5 text-[#533afd]">
+              <UserRound size={21} />
             </div>
-
           </div>
         </header>
 
-        {/* PAGE */}
-
         <div className="mx-auto max-w-[1400px] px-4 py-7 sm:px-8 sm:py-9 lg:px-10">
-
           {/* BIENVENUE */}
-
           <section className="mb-9">
-
-            <p className="text-sm font-medium text-[#533afd]">
+            <p className="text-sm font-semibold text-[#533afd]">
               {formatDate(new Date())}
             </p>
 
-            <h2 className="mt-2 text-2xl font-bold tracking-tight sm:text-4xl">
+            <h2 className="mt-2 text-2xl font-extrabold tracking-tight sm:text-4xl">
               Bonjour, {user.name.split(" ")[0]} !
             </h2>
 
             <p className="mt-3 text-sm text-slate-500">
-              Bienvenue dans votre espace professionnel Reserve X.
+              Voici un aperçu de votre activité sur Reserve X.
             </p>
-
           </section>
 
-          {/* PROFIL NON CREE */}
+          {/* NOTIFICATIONS PUSH */}
+          <section className="mb-9">
+            <PushNotifications />
+          </section>
 
+          {/* SERVICE CLIENT */}
+          <section className="mb-9">
+            <a
+              href="https://wa.me/22898126142"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group flex flex-col justify-between gap-4 rounded-2xl border border-[#533afd]/15 bg-white p-5 transition hover:border-[#533afd]/40 sm:flex-row sm:items-center sm:p-6"
+            >
+              <div className="flex items-center gap-4">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#533afd]/10 text-[#533afd]">
+                  <Headset size={23} />
+                </div>
+
+                <div>
+                  <h3 className="font-extrabold text-[#061b31]">
+                    Besoin d'aide ?
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Notre service client est disponible pour vous accompagner.
+                  </p>
+                </div>
+              </div>
+
+              <span className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#533afd] px-5 py-3 text-sm font-bold text-white transition group-hover:bg-[#4229e8]">
+                Contacter le service client
+                <ArrowUpRight size={17} />
+              </span>
+            </a>
+          </section>
+
+          {/* PROFIL NON CRÉÉ */}
           {!profile && (
-            <section className="mb-9 overflow-hidden rounded-3xl bg-[#061b31] p-7 text-white sm:p-10">
+            <section className="relative mb-9 overflow-hidden rounded-[2rem] bg-gradient-to-br from-[#061b31] via-[#142d52] to-[#533afd] p-7 text-white shadow-xl shadow-[#061b31]/10 sm:p-10">
+              <div className="pointer-events-none absolute -right-16 -top-20 h-72 w-72 rounded-full border-[35px] border-white/5" />
+              <div className="pointer-events-none absolute -bottom-24 right-40 h-64 w-64 rounded-full bg-[#8b7aff]/20 blur-3xl" />
 
-              <div className="max-w-2xl">
-
-                <span className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-semibold text-indigo-200">
-                  <Building2 size={15} />
-                  Première étape
+              <div className="relative max-w-2xl">
+                <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-4 py-2 text-xs font-bold text-indigo-100">
+                  <Sparkles size={15} />
+                  Bienvenue sur Reserve X
                 </span>
 
-                <h3 className="mt-6 text-2xl font-bold sm:text-3xl">
-                  Présentez votre établissement sur Reserve X.
+                <h3 className="mt-6 text-2xl font-extrabold leading-tight sm:text-4xl">
+                  Votre activité mérite d'être visible.
                 </h3>
 
                 <p className="mt-4 max-w-xl text-sm leading-7 text-slate-300">
-                  Créez votre profil professionnel pour présenter votre
-                  activité, ajouter vos prestations et commencer à recevoir
-                  des réservations.
+                  Créez votre profil professionnel, présentez vos services
+                  et permettez à vos futurs clients de réserver en ligne.
                 </p>
 
                 <Link
                   href="/pro/profil"
-                  className="mt-7 inline-flex items-center gap-3 rounded-xl bg-[#533afd] px-6 py-4 text-sm font-bold text-white transition hover:bg-[#4229e8]"
+                  className="mt-7 inline-flex items-center gap-3 rounded-xl bg-white px-6 py-4 text-sm font-extrabold text-[#533afd] shadow-lg transition hover:-translate-y-0.5 hover:bg-indigo-50"
                 >
                   Créer mon établissement
                   <ArrowRight size={18} />
                 </Link>
-
               </div>
             </section>
           )}
 
           {/* PROFIL EXISTANT */}
-
           {profile && (
-            <section className="mb-9 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
-
-              <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
-
-                <div>
-                  <div className="flex items-center gap-2">
-
-                    <h3 className="text-xl font-bold">
-                      {profile.businessName}
-                    </h3>
-
-                    {profile.isPublished ? (
-                      <CheckCircle2 size={18} className="text-emerald-500" />
-                    ) : (
-                      <Clock size={18} className="text-amber-500" />
-                    )}
-
+            <section className="mb-9 overflow-hidden rounded-[1.75rem] border border-slate-100 bg-white shadow-sm">
+              <div className="flex flex-col justify-between gap-5 p-6 sm:flex-row sm:items-center sm:p-8">
+                <div className="flex items-center gap-4">
+                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#533afd]/10 text-[#533afd]">
+                    <BriefcaseBusiness size={25} />
                   </div>
 
-                  <p className="mt-2 text-sm text-slate-500">
-                    {profile.isPublished
-                      ? "Votre établissement est publié."
-                      : "Votre établissement n'est pas encore publié."}
-                  </p>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-xl font-extrabold">
+                        {profile.businessName}
+                      </h3>
+
+                      {profile.isPublished ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
+                          <CheckCircle2 size={13} />
+                          Publié
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700">
+                          <Clock size={13} />
+                          Non publié
+                        </span>
+                      )}
+                    </div>
+
+                    <p className="mt-2 text-sm text-slate-500">
+                      {profile.isPublished
+                        ? "Votre établissement est visible sur Reserve X."
+                        : "Votre établissement n'est pas encore publié."}
+                    </p>
+                  </div>
                 </div>
 
-                <Link
-                  href="/pro/profil"
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-5 py-3 text-sm font-semibold transition hover:bg-slate-50"
-                >
-                  Gérer mon profil
-                  <ArrowRight size={16} />
-                </Link>
+                <div className="flex flex-wrap items-center gap-3">
+                  {profile.isPublished && (
+                    <Link
+                      href={`/p/${profile.slug}`}
+                      target="_blank"
+                      className="inline-flex items-center gap-2 rounded-xl bg-[#533afd]/10 px-4 py-3 text-sm font-bold text-[#533afd] transition hover:bg-[#533afd]/15"
+                    >
+                      Voir ma page
+                      <ArrowUpRight size={16} />
+                    </Link>
+                  )}
 
+                  <Link
+                    href="/pro/profil"
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-5 py-3 text-sm font-bold transition hover:border-[#533afd]/30 hover:bg-slate-50"
+                  >
+                    Gérer mon profil
+                    <ArrowRight size={16} />
+                  </Link>
+                </div>
               </div>
+
+              {!profile.isPublished && (
+                <div className="border-t border-slate-100 bg-amber-50/50 px-6 py-4 sm:px-8">
+                  <PublishProfileButton />
+                </div>
+              )}
             </section>
           )}
 
           {/* STATISTIQUES */}
+          <section>
+            <div className="mb-5">
+              <h3 className="text-lg font-extrabold">Vue d'ensemble</h3>
+              <p className="mt-1 text-sm text-slate-400">
+                Les chiffres clés de votre établissement.
+              </p>
+            </div>
 
-          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-3">
+              <StatCard
+                title="Prestations actives"
+                value={totalServices}
+                icon={<Building2 size={21} />}
+                description="Services proposés"
+                color="violet"
+              />
 
-            <StatCard
-              title="Prestations actives"
-              value={totalServices}
-              icon={<Building2 size={21} />}
-              description="Services proposés"
-            />
+              <StatCard
+                title="Réservations"
+                value={totalBookings}
+                icon={<CalendarDays size={21} />}
+                description="Toutes les réservations"
+                color="blue"
+              />
 
-            <StatCard
-              title="Réservations"
-              value={totalBookings}
-              icon={<CalendarDays size={21} />}
-              description="Toutes les réservations"
-            />
+              <StatCard
+                title="En attente"
+                value={pendingBookings}
+                icon={<Clock size={21} />}
+                description="Réservations à traiter"
+                color="amber"
+              />
 
-            <StatCard
-              title="En attente"
-              value={pendingBookings}
-              icon={<Clock size={21} />}
-              description="Réservations à traiter"
-            />
+              <StatCard
+                title="Confirmées"
+                value={confirmedBookings}
+                icon={<CheckCircle2 size={21} />}
+                description="Réservations confirmées"
+                color="green"
+              />
 
-            <StatCard
-              title="Confirmées"
-              value={confirmedBookings}
-              icon={<CheckCircle2 size={21} />}
-              description="Réservations confirmées"
-            />
+              <StatCard
+                title="Chiffre d'affaires"
+                value={formatAmount(totalRevenue, revenueCurrency)}
+                icon={<Wallet size={21} />}
+                description="Paiements réussis uniquement"
+                highlight
+                color="violet"
+              />
 
-            <StatCard
-              title="Chiffre d'affaires"
-              value={formatAmount(totalRevenue, revenueCurrency)}
-              icon={<Wallet size={21} />}
-              description="Paiements réussis uniquement"
-              highlight
-            />
-
+              <StatCard
+                title="Note moyenne"
+                value={
+                  averageRating !== null
+                    ? `${averageRating.toFixed(1).replace(".", ",")} / 5`
+                    : "Aucune note"
+                }
+                icon={<Star size={21} />}
+                description={`${totalReviews} avis client${totalReviews > 1 ? "s" : ""}`}
+                color="amber"
+              />
+            </div>
           </section>
 
           {/* GRAPHIQUE */}
-
-          <section className="mt-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
-
-            <div className="mb-6 flex items-center gap-3">
-
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#533afd]/10 text-[#533afd]">
-                <TrendingUp size={22} />
+          <section className="mt-9 rounded-[1.75rem] border border-slate-100 bg-white p-5 shadow-sm sm:p-8">
+            <div className="mb-7 flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#533afd]/10 text-[#533afd]">
+                <TrendingUp size={23} />
               </div>
 
               <div>
-                <h3 className="font-bold">
+                <h3 className="font-extrabold">
                   Analyse de votre activité
                 </h3>
-
                 <p className="text-xs text-slate-400">
                   Suivez vos performances en un coup d'œil.
                 </p>
               </div>
-
             </div>
 
             <BookingChart data={chartData} />
-
           </section>
 
-          {/* DERNIERES RESERVATIONS */}
+          {/* AVIS CLIENTS */}
+          {profile && (
+            <section className="mt-10">
+              <div className="mb-5 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                <div>
+                  <h3 className="text-xl font-extrabold">
+                    Avis de vos clients
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Découvrez les retours de vos clients sur vos prestations.
+                  </p>
+                </div>
 
+                {profile.isPublished && (
+                  <Link
+                    href={`/p/${profile.slug}`}
+                    target="_blank"
+                    className="inline-flex items-center gap-2 text-sm font-bold text-[#533afd] hover:underline"
+                  >
+                    Voir les avis publics
+                    <ArrowUpRight size={16} />
+                  </Link>
+                )}
+              </div>
+
+              <div className="overflow-hidden rounded-[1.75rem] border border-slate-100 bg-white shadow-sm">
+                {/* RÉSUMÉ DES AVIS */}
+                <div className="flex flex-col gap-5 border-b border-slate-100 bg-slate-50/60 p-6 sm:flex-row sm:items-center sm:justify-between sm:px-8">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                      Note globale
+                    </p>
+
+                    <div className="mt-2 flex flex-wrap items-center gap-3">
+                      <span className="text-4xl font-extrabold text-[#061b31]">
+                        {averageRating !== null
+                          ? averageRating.toFixed(1).replace(".", ",")
+                          : "—"}
+                      </span>
+
+                      <div>
+                        <RatingStars
+                          rating={
+                            averageRating !== null
+                              ? Math.round(averageRating)
+                              : 0
+                          }
+                          size={19}
+                        />
+
+                        <p className="mt-1 text-xs text-slate-500">
+                          Sur 5 étoiles
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#533afd]/10 text-[#533afd]">
+                      <MessageSquareText size={22} />
+                    </div>
+
+                    <div>
+                      <p className="text-2xl font-extrabold text-[#061b31]">
+                        {totalReviews}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        Avis reçu{totalReviews > 1 ? "s" : ""}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* LISTE DES AVIS */}
+                {reviews.length > 0 ? (
+                  <div className="divide-y divide-slate-100">
+                    {reviews.map((review) => {
+                      const customerName =
+                        `${review.booking.customerFirstName} ${review.booking.customerLastName}`.trim();
+
+                      return (
+                        <article
+                          key={review.id}
+                          className="p-5 sm:p-6"
+                        >
+                          <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+                            <div className="flex min-w-0 items-start gap-3">
+                              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#533afd]/10 text-sm font-extrabold text-[#533afd]">
+                                {customerName
+                                  .charAt(0)
+                                  .toUpperCase() || "C"}
+                              </div>
+
+                              <div className="min-w-0">
+                                <h4 className="truncate font-extrabold text-[#061b31]">
+                                  {customerName || "Client"}
+                                </h4>
+
+                                <p className="mt-1 text-xs text-slate-500">
+                                  Prestation : {review.booking.service.name}
+                                </p>
+
+                                <div className="mt-2">
+                                  <RatingStars
+                                    rating={review.rating}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+
+                            <span className="shrink-0 text-xs text-slate-400">
+                              {formatDate(review.createdAt)}
+                            </span>
+                          </div>
+
+                          <div className="mt-4 pl-0 sm:pl-14">
+                            {review.comment ? (
+                              <p className="whitespace-pre-wrap text-sm leading-7 text-slate-600">
+                                {review.comment}
+                              </p>
+                            ) : (
+                              <p className="text-sm italic text-slate-400">
+                                Ce client n'a pas laissé de commentaire.
+                              </p>
+                            )}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="px-6 py-16 text-center">
+                    <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-amber-50 text-amber-500">
+                      <Star size={28} />
+                    </div>
+
+                    <h4 className="mt-5 font-extrabold">
+                      Aucun avis pour le moment
+                    </h4>
+
+                    <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-slate-500">
+                      Lorsque vos clients auront terminé une réservation
+                      et partagé leur expérience, leurs avis apparaîtront ici.
+                    </p>
+                  </div>
+                )}
+
+                {totalReviews > reviews.length && (
+                  <div className="border-t border-slate-100 px-6 py-4 text-center">
+                    <p className="text-xs text-slate-400">
+                      Les {reviews.length} avis les plus récents sont affichés.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+
+          {/* DERNIÈRES RÉSERVATIONS */}
           <section className="mt-10">
-
             <div className="mb-5 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-
               <div>
-                <h3 className="text-xl font-bold">
+                <h3 className="text-xl font-extrabold">
                   Dernières réservations
                 </h3>
-
                 <p className="mt-1 text-sm text-slate-500">
-                  Consultez les dernières demandes reçues.
+                  Les dernières demandes reçues par votre établissement.
                 </p>
               </div>
 
@@ -699,33 +991,26 @@ export default async function DashboardProPage() {
                 Toutes les réservations
                 <ArrowRight size={16} />
               </Link>
-
             </div>
 
-            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-
+            <div className="overflow-hidden rounded-[1.75rem] border border-slate-100 bg-white shadow-sm">
               {recentBookings.length > 0 ? (
-
                 <div className="divide-y divide-slate-100">
-
                   {recentBookings.map((booking) => {
                     const status = getBookingStatus(booking.status);
 
                     return (
                       <div
                         key={booking.id}
-                        className="flex flex-col gap-4 p-5 transition hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between"
+                        className="flex flex-col gap-4 p-5 transition hover:bg-slate-50/80 sm:flex-row sm:items-center sm:justify-between sm:px-6"
                       >
-
                         <div className="flex min-w-0 items-start gap-3">
-
-                          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#533afd]/10 text-[#533afd]">
-                            <UserRound size={20} />
+                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#533afd]/10 text-[#533afd]">
+                            <UserRound size={21} />
                           </div>
 
                           <div className="min-w-0">
-
-                            <h4 className="truncate font-bold">
+                            <h4 className="truncate font-extrabold">
                               {booking.customerFirstName}{" "}
                               {booking.customerLastName}
                             </h4>
@@ -737,16 +1022,16 @@ export default async function DashboardProPage() {
                             <p className="mt-1 text-xs text-slate-400">
                               Réf. {booking.reference}
                             </p>
-
                           </div>
-
                         </div>
 
                         <div className="flex flex-wrap items-center justify-between gap-4 sm:justify-end">
-
                           <div>
-                            <p className="text-sm font-bold">
-                              {formatAmount(booking.amount, booking.currency)}
+                            <p className="text-sm font-extrabold">
+                              {formatAmount(
+                                booking.amount,
+                                booking.currency
+                              )}
                             </p>
 
                             <p className="mt-1 text-xs text-slate-400">
@@ -755,59 +1040,44 @@ export default async function DashboardProPage() {
                           </div>
 
                           <span
-                            className={`inline-flex rounded-full px-3 py-2 text-xs font-semibold ${status.className}`}
+                            className={`inline-flex rounded-full px-3 py-2 text-xs font-bold ring-1 ring-inset ${status.className}`}
                           >
                             {status.label}
                           </span>
-
                         </div>
-
                       </div>
                     );
                   })}
-
                 </div>
-
               ) : (
-
-                <div className="px-6 py-14 text-center">
-
-                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
-                    <CalendarDays size={25} />
+                <div className="px-6 py-16 text-center">
+                  <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-[#533afd]/10 text-[#533afd]">
+                    <CalendarDays size={27} />
                   </div>
 
-                  <h4 className="mt-4 font-bold">
+                  <h4 className="mt-5 font-extrabold">
                     Aucune réservation pour le moment
                   </h4>
 
-                  <p className="mt-2 text-sm text-slate-500">
-                    Vos nouvelles réservations apparaîtront ici.
+                  <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-slate-500">
+                    Vos nouvelles réservations apparaîtront ici dès que
+                    vos clients commenceront à réserver.
                   </p>
-
                 </div>
-
               )}
-
             </div>
-
           </section>
 
           {/* ACTIONS RAPIDES */}
-
           <section className="mt-10">
-
             <div className="mb-5">
-              <h3 className="text-xl font-bold">
-                Actions rapides
-              </h3>
-
+              <h3 className="text-xl font-extrabold">Actions rapides</h3>
               <p className="mt-1 text-sm text-slate-500">
                 Accédez rapidement aux fonctionnalités principales.
               </p>
             </div>
 
             <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-
               <QuickAction
                 href="/pro/profil"
                 icon={<Store size={22} />}
@@ -826,43 +1096,71 @@ export default async function DashboardProPage() {
                 href="/pro/reservations"
                 icon={<CalendarDays size={22} />}
                 title="Mes réservations"
-                description="Consultez les demandes de réservation."
+                description="Consultez et gérez vos demandes de réservation."
               />
-
             </div>
           </section>
 
-          {/* INFORMATION */}
+          {/* CONSEIL */}
+          <section className="relative mt-10 overflow-hidden rounded-[1.75rem] border border-[#533afd]/10 bg-gradient-to-r from-[#533afd]/5 to-indigo-50/50 p-6 sm:p-8">
+            <div className="pointer-events-none absolute -right-10 -top-16 h-48 w-48 rounded-full bg-[#533afd]/5 blur-2xl" />
 
-          <section className="mt-10 rounded-2xl border border-indigo-100 bg-indigo-50/70 p-6">
-
-            <div className="flex items-start gap-4">
-
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white text-[#533afd]">
-                <CheckCircle2 size={22} />
+            <div className="relative flex items-start gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white text-[#533afd] shadow-sm">
+                <Sparkles size={23} />
               </div>
 
               <div>
-                <h4 className="font-bold text-[#061b31]">
-                  Votre espace professionnel est prêt.
+                <h4 className="font-extrabold text-[#061b31]">
+                  Faites briller votre établissement.
                 </h4>
 
-                <p className="mt-2 text-sm leading-6 text-slate-600">
-                  Complétez votre profil et ajoutez vos prestations pour
-                  commencer à développer votre activité sur Reserve X.
+                <p className="mt-2 max-w-2xl text-sm leading-7 text-slate-600">
+                  Complétez votre profil, ajoutez des prestations attractives
+                  et publiez votre établissement pour permettre aux clients
+                  de vous découvrir sur Reserve X.
                 </p>
               </div>
-
             </div>
           </section>
 
           <footer className="mt-12 border-t border-slate-200 py-6 text-center text-xs text-slate-400">
             © 2026 Reserve X — Espace professionnel.
           </footer>
-
         </div>
       </div>
     </main>
+  );
+}
+
+/* LIEN SIDEBAR */
+
+function SidebarLink({
+  href,
+  icon,
+  label,
+  active = false,
+}: {
+  href: string;
+  icon: ReactNode;
+  label: string;
+  active?: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      className={`flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold transition ${
+        active
+          ? "bg-[#533afd]/10 text-[#533afd]"
+          : "text-slate-500 hover:bg-slate-50 hover:text-[#533afd]"
+      }`}
+    >
+      {icon}
+      {label}
+      {active && (
+        <span className="ml-auto h-2 w-2 rounded-full bg-[#533afd]" />
+      )}
+    </Link>
   );
 }
 
@@ -874,42 +1172,47 @@ function StatCard({
   icon,
   description,
   highlight = false,
+  color = "violet",
 }: {
   title: string;
   value: string | number;
   icon: ReactNode;
   description: string;
   highlight?: boolean;
+  color?: "violet" | "blue" | "amber" | "green";
 }) {
+  const iconColors = {
+    violet: "bg-[#533afd]/10 text-[#533afd]",
+    blue: "bg-blue-50 text-blue-600",
+    amber: "bg-amber-50 text-amber-600",
+    green: "bg-emerald-50 text-emerald-600",
+  };
+
   return (
     <div
-      className={`rounded-2xl border p-5 transition hover:-translate-y-1 hover:shadow-lg sm:p-6 ${
+      className={`group rounded-[1.5rem] border p-5 transition duration-300 hover:-translate-y-1 hover:shadow-xl sm:p-6 ${
         highlight
-          ? "border-[#533afd]/20 bg-[#533afd]/5"
-          : "border-slate-200 bg-white hover:shadow-slate-200/50"
+          ? "border-[#533afd]/20 bg-gradient-to-br from-white to-[#533afd]/5 shadow-sm"
+          : "border-slate-100 bg-white shadow-sm hover:shadow-slate-200/50"
       }`}
     >
-
-      <div className="flex items-center justify-between">
-
-        <span className="text-sm font-medium text-slate-500">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-semibold text-slate-500">
           {title}
         </span>
 
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#533afd]/10 text-[#533afd]">
+        <div
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${iconColors[color]}`}
+        >
           {icon}
         </div>
-
       </div>
 
-      <p className="mt-5 break-words text-2xl font-bold sm:text-3xl">
+      <p className="mt-5 break-words text-2xl font-extrabold tracking-tight text-[#061b31] sm:text-3xl">
         {value}
       </p>
 
-      <p className="mt-2 text-xs text-slate-400">
-        {description}
-      </p>
-
+      <p className="mt-2 text-xs text-slate-400">{description}</p>
     </div>
   );
 }
@@ -930,26 +1233,25 @@ function QuickAction({
   return (
     <Link
       href={href}
-      className="group rounded-2xl border border-slate-200 bg-white p-6 transition hover:-translate-y-1 hover:border-[#533afd]/30 hover:shadow-lg hover:shadow-slate-200/50"
+      className="group rounded-[1.5rem] border border-slate-100 bg-white p-6 shadow-sm transition duration-300 hover:-translate-y-1 hover:border-[#533afd]/20 hover:shadow-xl hover:shadow-slate-200/50"
     >
-
-      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#533afd]/10 text-[#533afd] transition group-hover:bg-[#533afd] group-hover:text-white">
+      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#533afd]/10 text-[#533afd] transition duration-300 group-hover:bg-[#533afd] group-hover:text-white">
         {icon}
       </div>
 
-      <h4 className="mt-5 font-bold">
-        {title}
-      </h4>
+      <h4 className="mt-5 font-extrabold text-[#061b31]">{title}</h4>
 
       <p className="mt-2 text-sm leading-6 text-slate-500">
         {description}
       </p>
 
-      <div className="mt-5 flex items-center gap-2 text-xs font-bold text-[#533afd]">
+      <div className="mt-5 flex items-center gap-2 text-xs font-extrabold text-[#533afd]">
         Accéder
-        <ArrowRight size={15} />
+        <ArrowRight
+          size={15}
+          className="transition group-hover:translate-x-1"
+        />
       </div>
-
     </Link>
   );
 }

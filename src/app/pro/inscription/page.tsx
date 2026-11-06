@@ -13,6 +13,8 @@ import {
   Phone,
   User,
   CheckCircle2,
+  Sparkles,
+  ShieldCheck,
 } from "lucide-react";
 
 export default function InscriptionProPage() {
@@ -23,10 +25,8 @@ export default function InscriptionProPage() {
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -77,55 +77,108 @@ export default function InscriptionProPage() {
   }
 
   const inputClass =
-    "w-full rounded-xl border border-slate-200 bg-white py-3.5 pl-11 pr-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#533afd] focus:ring-4 focus:ring-[#533afd]/10";
+    "w-full rounded-xl border border-slate-200 bg-slate-50/70 py-3.5 pl-11 pr-4 text-sm text-[#061b31] outline-none transition duration-200 placeholder:text-slate-400 hover:border-slate-300 focus:border-[#533afd] focus:bg-white focus:ring-4 focus:ring-[#533afd]/10";
+
+  const benefits = [
+    "Présentez votre établissement en ligne",
+    "Recevez des réservations facilement",
+    "Gérez vos disponibilités simplement",
+    "Suivez vos revenus et votre activité",
+  ];
 
   return (
-    <main className="min-h-screen bg-[#f7f9fc] px-5 py-10">
-      <div className="mx-auto grid min-h-[85vh] max-w-6xl items-center gap-12 lg:grid-cols-2">
+    <main className="relative min-h-screen overflow-hidden bg-[#f7f9fc] px-5 py-8 sm:py-12">
+      {/* DÉCORATION */}
+      <div className="pointer-events-none absolute -left-40 -top-40 h-96 w-96 rounded-full bg-[#533afd]/10 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-40 -right-40 h-96 w-96 rounded-full bg-blue-400/10 blur-3xl" />
 
-        {/* PRESENTATION */}
+      <div className="relative mx-auto grid min-h-[85vh] max-w-6xl items-center gap-12 lg:grid-cols-2">
+        {/* PRÉSENTATION */}
         <div className="hidden lg:block">
           <Link
             href="/"
-            className="inline-flex items-center gap-2 text-2xl font-bold tracking-tight text-[#061b31]"
+            className="inline-flex items-center gap-3 text-2xl font-extrabold tracking-tight text-[#061b31]"
           >
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#533afd] text-white">
+            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-[#654cff] to-[#4229e8] text-lg text-white shadow-lg shadow-[#533afd]/25">
               R
             </span>
             Reserve<span className="text-[#533afd]">X</span>
           </Link>
 
-          <div className="mt-16">
-            <span className="rounded-full bg-[#533afd]/10 px-4 py-2 text-xs font-bold uppercase tracking-wider text-[#533afd]">
+          <div className="mt-20 max-w-xl">
+            <div className="inline-flex items-center gap-2 rounded-full border border-[#533afd]/10 bg-white px-4 py-2 text-xs font-bold uppercase tracking-wider text-[#533afd] shadow-sm">
+              <Sparkles size={14} />
               Espace professionnel
-            </span>
+            </div>
 
-            <h1 className="mt-7 max-w-lg text-5xl font-bold leading-tight tracking-tight text-[#061b31]">
-              Développez votre activité avec Reserve X.
+            <h1 className="mt-8 text-5xl font-extrabold leading-[1.15] tracking-tight text-[#061b31] xl:text-6xl">
+              Faites grandir votre activité avec{" "}
+              <span className="text-[#533afd]">Reserve X.</span>
             </h1>
 
-            <p className="mt-6 max-w-md text-base leading-8 text-slate-500">
-              Présentez vos services, recevez des réservations et gérez votre
-              activité depuis un seul espace.
+            <p className="mt-7 max-w-md text-base leading-8 text-slate-500">
+              Développez votre visibilité, attirez de nouveaux clients et
+              simplifiez la gestion de vos réservations depuis un espace unique.
             </p>
 
             <div className="mt-10 space-y-5">
-              {[
-                "Présentez votre établissement en ligne",
-                "Recevez des réservations facilement",
-                "Suivez vos revenus et votre activité",
-              ].map((item) => (
+              {benefits.map((item) => (
                 <div key={item} className="flex items-center gap-3">
-                  <CheckCircle2 className="h-5 w-5 text-[#533afd]" />
-                  <span className="text-sm font-medium text-slate-700">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#533afd]/10">
+                    <CheckCircle2 className="h-4 w-4 text-[#533afd]" />
+                  </span>
+                  <span className="text-sm font-semibold text-[#26364a]">
                     {item}
                   </span>
                 </div>
               ))}
             </div>
+
+            {/* CARTE DÉCORATIVE */}
+            <div className="mt-12 max-w-md rounded-3xl border border-white bg-white/80 p-5 shadow-xl shadow-slate-200/60 backdrop-blur">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#533afd]/10">
+                    <Building2 className="h-5 w-5 text-[#533afd]" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-[#061b31]">
+                      Votre établissement
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      Votre vitrine professionnelle
+                    </p>
+                  </div>
+                </div>
+
+                <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-600">
+                  En ligne
+                </span>
+              </div>
+
+              <div className="mt-5 grid grid-cols-3 gap-3">
+                {[
+                  ["Visibilité", "24h/24"],
+                  ["Réservations", "En ligne"],
+                  ["Gestion", "Simple"],
+                ].map(([label, value]) => (
+                  <div
+                    key={label}
+                    className="rounded-2xl bg-[#f7f9fc] p-3"
+                  >
+                    <p className="text-[10px] font-medium text-slate-400">
+                      {label}
+                    </p>
+                    <p className="mt-1 text-xs font-extrabold text-[#061b31]">
+                      {value}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
 
-          <p className="mt-20 text-xs text-slate-400">
+          <p className="mt-16 text-xs text-slate-400">
             © 2026 Reserve X. Tous droits réservés.
           </p>
         </div>
@@ -135,34 +188,40 @@ export default function InscriptionProPage() {
           <div className="mb-8 text-center lg:hidden">
             <Link
               href="/"
-              className="text-3xl font-bold tracking-tight text-[#061b31]"
+              className="inline-flex items-center gap-2 text-3xl font-extrabold tracking-tight text-[#061b31]"
             >
               Reserve<span className="text-[#533afd]">X</span>
             </Link>
+
             <p className="mt-2 text-sm text-slate-500">
               Espace professionnel
             </p>
           </div>
 
-          <div className="rounded-3xl border border-slate-100 bg-white p-7 shadow-xl shadow-slate-200/50 sm:p-9">
+          <div className="rounded-[2rem] border border-white bg-white p-7 shadow-2xl shadow-slate-200/70 sm:p-9">
             <div className="mb-8">
-              <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-2xl bg-[#533afd]/10">
-                <Building2 className="h-6 w-6 text-[#533afd]" />
+              <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-[#654cff]/15 to-[#533afd]/5">
+                <Building2 className="h-7 w-7 text-[#533afd]" />
               </div>
 
-              <h2 className="text-2xl font-bold text-[#061b31]">
+              <span className="text-xs font-bold uppercase tracking-widest text-[#533afd]">
+                Rejoignez-nous
+              </span>
+
+              <h2 className="mt-2 text-3xl font-extrabold tracking-tight text-[#061b31]">
                 Créer un compte
               </h2>
 
-              <p className="mt-2 text-sm leading-6 text-slate-500">
-                Rejoignez Reserve X et commencez à développer votre activité.
+              <p className="mt-3 text-sm leading-6 text-slate-500">
+                Créez votre espace professionnel et commencez à développer
+                votre activité.
               </p>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-5">
               {/* NOM */}
               <div>
-                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                <label className="mb-2 block text-sm font-semibold text-[#26364a]">
                   Nom complet
                 </label>
 
@@ -185,7 +244,7 @@ export default function InscriptionProPage() {
 
               {/* EMAIL */}
               <div>
-                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                <label className="mb-2 block text-sm font-semibold text-[#26364a]">
                   Adresse e-mail
                 </label>
 
@@ -204,9 +263,9 @@ export default function InscriptionProPage() {
                 </div>
               </div>
 
-              {/* TELEPHONE */}
+              {/* TÉLÉPHONE */}
               <div>
-                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                <label className="mb-2 block text-sm font-semibold text-[#26364a]">
                   Numéro de téléphone
                 </label>
 
@@ -227,7 +286,7 @@ export default function InscriptionProPage() {
 
               {/* MOT DE PASSE */}
               <div>
-                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                <label className="mb-2 block text-sm font-semibold text-[#26364a]">
                   Mot de passe
                 </label>
 
@@ -248,7 +307,7 @@ export default function InscriptionProPage() {
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 transition hover:text-[#533afd]"
                     aria-label="Afficher ou masquer le mot de passe"
                   >
                     {showPassword ? (
@@ -262,7 +321,7 @@ export default function InscriptionProPage() {
 
               {/* CONFIRMATION */}
               <div>
-                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                <label className="mb-2 block text-sm font-semibold text-[#26364a]">
                   Confirmer le mot de passe
                 </label>
 
@@ -284,7 +343,7 @@ export default function InscriptionProPage() {
                     onClick={() =>
                       setShowConfirmPassword(!showConfirmPassword)
                     }
-                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 transition hover:text-[#533afd]"
                     aria-label="Afficher ou masquer la confirmation"
                   >
                     {showConfirmPassword ? (
@@ -307,14 +366,17 @@ export default function InscriptionProPage() {
               <button
                 type="submit"
                 disabled={loading}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#533afd] py-4 text-sm font-bold text-white shadow-lg shadow-[#533afd]/20 transition hover:bg-[#4229e8] disabled:cursor-not-allowed disabled:opacity-60"
+                className="group flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#654cff] to-[#4229e8] py-4 text-sm font-bold text-white shadow-lg shadow-[#533afd]/25 transition duration-300 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-[#533afd]/30 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {loading ? (
                   "Création du compte..."
                 ) : (
                   <>
                     Créer mon compte
-                    <ArrowRight size={18} />
+                    <ArrowRight
+                      size={18}
+                      className="transition group-hover:translate-x-1"
+                    />
                   </>
                 )}
               </button>
@@ -327,17 +389,20 @@ export default function InscriptionProPage() {
 
               <Link
                 href="/pro/connexion"
-                className="mt-2 inline-block text-sm font-bold text-[#533afd] hover:underline"
+                className="mt-2 inline-flex items-center gap-1 text-sm font-bold text-[#533afd] hover:underline"
               >
                 Se connecter
+                <ArrowRight size={14} />
               </Link>
             </div>
           </div>
 
-          <p className="mt-6 text-center text-xs text-slate-400">
-            En créant un compte, vous acceptez les conditions d'utilisation
-            de Reserve X.
-          </p>
+          <div className="mt-6 flex items-center justify-center gap-2 text-center text-xs text-slate-400">
+            <ShieldCheck size={15} />
+            <span>
+              Vos informations sont protégées par Reserve X.
+            </span>
+          </div>
         </div>
       </div>
     </main>

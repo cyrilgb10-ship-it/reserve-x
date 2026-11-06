@@ -1,5 +1,8 @@
 import { connection, NextRequest, NextResponse } from "next/server";
-import { BookingStatus, UserRole } from "@/generated/prisma/client";
+import {
+  BookingStatus,
+  UserRole,
+} from "@/generated/prisma/client";
 
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -15,7 +18,7 @@ export async function GET(request: NextRequest) {
     if (!session || session.role !== UserRole.PROFESSIONAL) {
       return NextResponse.json(
         { error: "Accès non autorisé." },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -27,7 +30,7 @@ export async function GET(request: NextRequest) {
     if (!profile) {
       return NextResponse.json(
         { error: "Profil professionnel introuvable." },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -38,15 +41,15 @@ export async function GET(request: NextRequest) {
 
     const page = Math.max(
       1,
-      Number.parseInt(searchParams.get("page") || "1", 10) || 1
+      Number.parseInt(searchParams.get("page") || "1", 10) || 1,
     );
 
     const limit = Math.min(
       50,
       Math.max(
         1,
-        Number.parseInt(searchParams.get("limit") || "20", 10) || 20
-      )
+        Number.parseInt(searchParams.get("limit") || "20", 10) || 20,
+      ),
     );
 
     if (
@@ -56,7 +59,7 @@ export async function GET(request: NextRequest) {
     ) {
       return NextResponse.json(
         { error: "Statut de réservation invalide." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -113,7 +116,19 @@ export async function GET(request: NextRequest) {
         : {}),
     };
 
-    const [bookings, total] = await prisma.$transaction([
+    const profileFilter = { profileId: profile.id };
+
+    const [
+      bookings,
+      total,
+      all,
+      pendingPayment,
+      confirmed,
+      completed,
+      cancelled,
+      expired,
+      refunded,
+    ] = await Promise.all([
       prisma.booking.findMany({
         where,
         orderBy: [{ startsAt: "desc" }, { createdAt: "desc" }],
@@ -133,7 +148,7 @@ export async function GET(request: NextRequest) {
           amount: true,
           currency: true,
           status: true,
-          qrToken: true,
+          paymentAttempt: true,
           qrUsedAt: true,
           completedAt: true,
           createdAt: true,
@@ -146,8 +161,13 @@ export async function GET(request: NextRequest) {
             },
           },
 
-          payment: {
+          payments: {
+            orderBy: {
+              attemptNumber: "desc",
+            },
+            take: 1,
             select: {
+              attemptNumber: true,
               amount: true,
               currency: true,
               status: true,
@@ -160,44 +180,88 @@ export async function GET(request: NextRequest) {
       }),
 
       prisma.booking.count({ where }),
+
+      prisma.booking.count({
+        where: profileFilter,
+      }),
+
+      prisma.booking.count({
+        where: {
+          ...profileFilter,
+          status: BookingStatus.PENDING_PAYMENT,
+        },
+      }),
+
+      prisma.booking.count({
+        where: {
+          ...profileFilter,
+          status: BookingStatus.CONFIRMED,
+        },
+      }),
+
+      prisma.booking.count({
+        where: {
+          ...profileFilter,
+          status: BookingStatus.COMPLETED,
+        },
+      }),
+
+      prisma.booking.count({
+        where: {
+          ...profileFilter,
+          status: BookingStatus.CANCELLED,
+        },
+      }),
+
+      prisma.booking.count({
+        where: {
+          ...profileFilter,
+          status: BookingStatus.EXPIRED,
+        },
+      }),
+
+      prisma.booking.count({
+        where: {
+          ...profileFilter,
+          status: BookingStatus.REFUNDED,
+        },
+      }),
     ]);
 
-    const profileFilter = { profileId: profile.id };
+    // Conserver la structure payment attendue par l'interface.
+    const formattedBookings = bookings.map((booking) => {
+      const {
+        payments,
+        paymentAttempt,
+        ...bookingData
+      } = booking;
 
-    const [
-      all,
-      pendingPayment,
-      confirmed,
-      completed,
-      cancelled,
-      expired,
-      refunded,
-    ] = await prisma.$transaction([
-      prisma.booking.count({ where: profileFilter }),
-      prisma.booking.count({
-        where: { ...profileFilter, status: BookingStatus.PENDING_PAYMENT },
-      }),
-      prisma.booking.count({
-        where: { ...profileFilter, status: BookingStatus.CONFIRMED },
-      }),
-      prisma.booking.count({
-        where: { ...profileFilter, status: BookingStatus.COMPLETED },
-      }),
-      prisma.booking.count({
-        where: { ...profileFilter, status: BookingStatus.CANCELLED },
-      }),
-      prisma.booking.count({
-        where: { ...profileFilter, status: BookingStatus.EXPIRED },
-      }),
-      prisma.booking.count({
-        where: { ...profileFilter, status: BookingStatus.REFUNDED },
-      }),
-    ]);
+      const latestPayment = payments[0];
+
+      const currentPayment =
+        latestPayment?.attemptNumber === paymentAttempt
+          ? latestPayment
+          : null;
+
+      return {
+        ...bookingData,
+        payment: currentPayment
+          ? {
+              amount: currentPayment.amount,
+              currency: currentPayment.currency,
+              status: currentPayment.status,
+              network: currentPayment.network,
+              paidAt: currentPayment.paidAt,
+              verifiedAt: currentPayment.verifiedAt,
+            }
+          : null,
+      };
+    });
 
     return NextResponse.json({
       success: true,
 
-      bookings,
+      bookings: formattedBookings,
 
       pagination: {
         page,
@@ -221,7 +285,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(
       { error: "Impossible de récupérer les réservations." },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

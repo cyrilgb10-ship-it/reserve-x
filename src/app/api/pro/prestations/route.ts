@@ -4,12 +4,60 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 
+const customFieldSchema = z.object({
+  label: z.string().trim().min(2).max(100),
+  type: z.enum([
+    "TEXT",
+    "NUMBER",
+    "PHONE",
+    "EMAIL",
+    "SELECT",
+    "CHECKBOX",
+  ]),
+  required: z.boolean().default(false),
+  options: z.array(z.string().trim().min(1)).max(30).optional(),
+});
+
+const customFieldsSchema = z
+  .array(customFieldSchema)
+  .max(15)
+  .optional()
+  .refine(
+    (fields) => {
+      if (!fields) return true;
+
+      const labels = fields.map((field) =>
+        field.label.toLowerCase()
+      );
+
+      return new Set(labels).size === labels.length;
+    },
+    {
+      message: "Les noms des champs doivent être uniques.",
+    }
+  )
+  .refine(
+    (fields) => {
+      if (!fields) return true;
+
+      return fields.every(
+        (field) =>
+          field.type !== "SELECT" ||
+          (field.options && field.options.length > 0)
+      );
+    },
+    {
+      message: "Chaque liste déroulante doit avoir des options.",
+    }
+  );
+
 const serviceSchema = z.object({
   name: z.string().trim().min(2).max(100),
   description: z.string().trim().max(2000).nullable().optional(),
   price: z.number().int().positive(),
   durationMinutes: z.number().int().positive().nullable().optional(),
   capacity: z.number().int().positive().default(1),
+  customFields: customFieldsSchema,
 });
 
 const updateServiceSchema = z
@@ -20,6 +68,7 @@ const updateServiceSchema = z
     durationMinutes: z.number().int().positive().nullable().optional(),
     capacity: z.number().int().positive().optional(),
     isActive: z.boolean().optional(),
+    customFields: customFieldsSchema,
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: "Aucune modification fournie.",
@@ -28,7 +77,10 @@ const updateServiceSchema = z
 async function getProfessionalProfile(userId: string) {
   return prisma.professionalProfile.findUnique({
     where: { userId },
-    select: { id: true },
+    select: {
+      id: true,
+      category: true,
+    },
   });
 }
 
@@ -53,7 +105,25 @@ async function getJsonBody(request: Request) {
   }
 }
 
-// GET : récupérer les prestations
+function prepareCustomFields(
+  fields:
+    | z.infer<typeof customFieldSchema>[]
+    | undefined
+) {
+  if (!fields) return [];
+
+  return fields.map((field) => ({
+    label: field.label,
+    type: field.type,
+    required: field.required,
+    options:
+      field.type === "SELECT" && field.options
+        ? field.options
+        : undefined,
+  }));
+}
+
+// GET : récupérer les prestations et la catégorie du professionnel
 
 export async function GET() {
   try {
@@ -81,6 +151,9 @@ export async function GET() {
         availabilities: {
           orderBy: { dayOfWeek: "asc" },
         },
+        customFields: {
+          orderBy: { createdAt: "asc" },
+        },
         _count: {
           select: { bookings: true },
         },
@@ -90,6 +163,7 @@ export async function GET() {
 
     return NextResponse.json({
       success: true,
+      category: profile.category,
       services,
     });
   } catch (error) {
@@ -102,7 +176,7 @@ export async function GET() {
   }
 }
 
-// POST : créer une prestation
+// POST : créer une prestation avec ses champs personnalisés
 
 export async function POST(request: Request) {
   try {
@@ -149,15 +223,23 @@ export async function POST(request: Request) {
       );
     }
 
+    const data = validation.data;
+
     const service = await prisma.service.create({
       data: {
         profileId: profile.id,
-        name: validation.data.name,
-        description: validation.data.description || null,
-        price: validation.data.price,
+        name: data.name,
+        description: data.description || null,
+        price: data.price,
         currency: "XOF",
-        durationMinutes: validation.data.durationMinutes ?? null,
-        capacity: validation.data.capacity,
+        durationMinutes: data.durationMinutes ?? null,
+        capacity: data.capacity,
+        customFields: {
+          create: prepareCustomFields(data.customFields),
+        },
+      },
+      include: {
+        customFields: true,
       },
     });
 
@@ -179,7 +261,7 @@ export async function POST(request: Request) {
   }
 }
 
-// PATCH : modifier une prestation ou son statut
+// PATCH : modifier une prestation
 
 export async function PATCH(request: Request) {
   try {
@@ -236,7 +318,11 @@ export async function PATCH(request: Request) {
         id: serviceId,
         profileId: profile.id,
       },
-      select: { id: true },
+      include: {
+        _count: {
+          select: { bookings: true },
+        },
+      },
     });
 
     if (!existingService) {
@@ -248,24 +334,58 @@ export async function PATCH(request: Request) {
 
     const data = validation.data;
 
-    const service = await prisma.service.update({
-      where: { id: existingService.id },
-      data: {
-        ...(data.name !== undefined && { name: data.name }),
-        ...(data.description !== undefined && {
-          description: data.description || null,
-        }),
-        ...(data.price !== undefined && { price: data.price }),
-        ...(data.durationMinutes !== undefined && {
-          durationMinutes: data.durationMinutes,
-        }),
-        ...(data.capacity !== undefined && {
-          capacity: data.capacity,
-        }),
-        ...(data.isActive !== undefined && {
-          isActive: data.isActive,
-        }),
-      },
+    if (
+      data.customFields !== undefined &&
+      existingService._count.bookings > 0
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Les champs personnalisés ne peuvent plus être modifiés après une première réservation.",
+          code: "CUSTOM_FIELDS_LOCKED",
+        },
+        { status: 409 }
+      );
+    }
+
+    const service = await prisma.$transaction(async (tx) => {
+      if (data.customFields !== undefined) {
+        await tx.customField.deleteMany({
+          where: { serviceId: existingService.id },
+        });
+      }
+
+      return tx.service.update({
+        where: { id: existingService.id },
+        data: {
+          ...(data.name !== undefined && {
+            name: data.name,
+          }),
+          ...(data.description !== undefined && {
+            description: data.description || null,
+          }),
+          ...(data.price !== undefined && {
+            price: data.price,
+          }),
+          ...(data.durationMinutes !== undefined && {
+            durationMinutes: data.durationMinutes,
+          }),
+          ...(data.capacity !== undefined && {
+            capacity: data.capacity,
+          }),
+          ...(data.isActive !== undefined && {
+            isActive: data.isActive,
+          }),
+          ...(data.customFields !== undefined && {
+            customFields: {
+              create: prepareCustomFields(data.customFields),
+            },
+          }),
+        },
+        include: {
+          customFields: true,
+        },
+      });
     });
 
     return NextResponse.json({
